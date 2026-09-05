@@ -54,9 +54,23 @@ Hubot adds `zone_decision`, a `diagnostic_msgs/DiagnosticArray`:
 
 | field | carries |
 |---|---|
-| `level` | `OK` in force · `ERROR` **when the zone is NOT being enforced** |
+| `level` | `OK` in force · `WARN` requested but **not yet confirmed** · `ERROR` **when the zone is NOT being enforced** |
 | `message` | a sentence a person can act on — *"Zone 2 is NOT being enforced on at least one target. Decide as if the zone's limits are not applied."* |
-| `values` | `zone_state`, `enforced`, `configured`, `pending_parameter_sets`, `targets`, and the triggering `event` |
+| `values` | `zone_state`, `mask_state`, `enforced`, `configured`, `unconfirmed_targets`, `degraded_targets`, `pending_parameter_sets`, `targets`, and the triggering `event` |
+
+⚑ **`enforced` is three-valued, and the middle value is the one that matters.**
+
+| value | means |
+|---|---|
+| `yes` | every target of the current state has **confirmed** |
+| `pending` | the sets are **issued and unanswered**. Treat as `NO`. |
+| `NO` | a target rejected, threw, or fell silent past `set_parameters_timeout` — **or** the mask named a state that has no configuration |
+
+⚑ **`zone_state` and `mask_state` are different facts.** `zone_state` is the state
+whose values are actually in force; `mask_state` is where the mask says the robot
+is. They agree in normal operation and **diverge exactly when something is wrong** —
+a mask cell naming a state the YAML never declared. One number could never carry
+that, which is why both are published.
 
 It is emitted on every zone transition and on every enforcement failure. The
 robot's `UInt8` topic is **untouched** — this adds a surface, it does not replace
@@ -91,17 +105,58 @@ it could not do, in terms a human can decide on.
     `ZoneParameterFilter: set_parameters failed`, with a negative control that fails.
 - **Still true, and load-bearing:** that reproduction is a gtest process, **not a
   robot and not a running `controller_server`**. Nothing here has run on real hardware.
-- ⚑ **Two defects in this package's OWN honesty, found and fixed 2026-09-05:**
-  `resetFilter()` did not clear `enforcementDegraded()` although the header stated a
-  reload clears it — so the owed test would have **failed against the shipped
-  contract**; and the latch was cleared on leaving the mask **before the restore was
-  confirmed**, publishing `enforced: yes` on a restore nothing had confirmed. Both are
-  the success-shaped value this package exists to abolish, inside the package that
-  exists to abolish it.
+- ⚑ **THE BIGGEST ONE THIS PACKAGE CANNOT DO — read this before you deploy it.**
+  **The filter cannot tell the navigation stack that its output is untrustworthy.**
+  nav2's channel for that is `Layer::isCurrent()`, which
+  `ControllerServer::waitForCostmap()` gates on for `costmap_update_timeout`
+  (default 0.30 s) before terminating the goal with `CONTROLLER_TIMED_OUT`. That
+  channel is closed to a derived filter three ways, all measured 2026-09-05:
+  `CostmapFilter::updateCosts()` runs `setCurrent(true)` **unconditionally after
+  `process()` returns**; it is declared **`final`**, so g++ refuses the override
+  outright (*"error: virtual function ... overriding final function"*); and
+  `Layer::isCurrent()` is **not virtual**. `enforcementDegraded()` is public, and
+  **nothing in nav2 calls it.**
+  **So an integrator must supply the stop themselves: subscribe to `zone_decision`
+  and refuse to drive on `enforced: NO` or `pending`.** A three-line upstream change
+  would open the channel (`virtual bool isFilterCurrent()` defaulting to true, used
+  as the argument to `setCurrent`); it is written and compile-verified at
+  `outputs/cpp/nav2_costmap_filter_isFilterCurrent_2026_09_05.patch`, and it is
+  **not submitted**.
+- ⚑ **Five defects in this package's OWN honesty, found and fixed 2026-09-05.** Each
+  was the success-shaped value this package exists to abolish, inside the package
+  that exists to abolish it:
+  - `applyState()` **threw** on a mask value no state declared — the same abort
+    this package removed from the parameter path, still open on the **mask data**
+    path, where a single mis-painted pixel reaches it.
+  - Removing that throw was only half the fix, and the worse half: the undeclared
+    value was still **recorded as the current state**, so the next transition's
+    reset missed and the previous zone's limit rode into a zone that never asked
+    for it. Measured: 0.2 m/s where 1.0 was required.
+  - `resetFilter()` **cleared the fault flag** on the stated ground that "the
+    configuration it referred to is gone". The configuration was never cleared at
+    all — no `.clear()` anywhere in the file — while `CostmapFilter::reset()`
+    re-runs the config load over it, and `nominal_defaults_` is filled with
+    `push_back`. So `ClearEntireCostmap`, which sits in **seven** of nav2's default
+    behaviour trees, both **erased the fault while the fault stood** and **doubled
+    the nominal-defaults list** every time it ran.
+  - `enforced: yes` was published on the **same cycle the sets were issued**, with
+    zero confirmations. The code applied its own principle on the way out of a zone
+    and violated it on the way in.
+  - **A target that never answered was reported as enforced, forever.**
+    `kMaxPendingSets` was declared to bound exactly that and referenced zero times —
+    and could never have caught it anyway, since one silent set sits at a count of
+    one indefinitely. A **deadline** does that job now.
+- **A successful set means the target ACCEPTED the value, not that it still holds
+  it.** Anything else may set the same parameter afterwards and this filter will not
+  notice. UNVERIFIED by construction.
+- **The filter only learns what the targets said when the costmap ticks** — the
+  result check runs from `process()` and nowhere else, because a costmap filter owns
+  no timer. If costmap updates stop, `pending` never resolves and the deadline never
+  fires; the last published value simply stands. The `DiagnosticArray` carries a
+  header stamp — check it.
 - The upstream filter carries other findings raised by nav2's maintainer that are
   **not** addressed here — a `reset()`/`deactivate()` conflation, an event-topic
   ordering gap, a parameter-client discovery race, and a re-apply arming window.
-  This release fixes the fatal path only.
 - Nothing here is safety-certified. It is QM-class software.
 
 ## Licence
