@@ -15,6 +15,7 @@
 #ifndef HUBOT__ZONE_PARAMETER_FILTER_HPP_
 #define HUBOT__ZONE_PARAMETER_FILTER_HPP_
 
+#include <future>
 #include <map>
 #include <memory>
 #include <string>
@@ -41,7 +42,7 @@ namespace hubot
  * each non-zero state ID maps via configuration to a list of parameter
  * overrides on configured target nodes.
  */
-class ZoneParameterFilter : public CostmapFilter
+class ZoneParameterFilter : public nav2_costmap_2d::CostmapFilter
 {
 public:
   ZoneParameterFilter();
@@ -150,6 +151,11 @@ protected:
   /// ⚑ HUBOT: latched true when a parameter set failed, so the zone is known NOT
   /// to be enforced on at least one target. Never resets silently; a reload
   /// clears it because the configuration it referred to is gone.
+  ///
+  /// ⚑ It is NOT cleared when the robot leaves the mask. Leaving the mask only
+  /// ISSUES the restore; nothing has confirmed it yet, and reporting
+  /// `enforced: yes` on an unconfirmed restore is the success-shaped value this
+  /// whole feature exists to abolish. resetFilter() is the only clear.
   bool enforcement_degraded_{false};
 
   /// ⚑ HUBOT — THE HUMAN-DECISION SURFACE.
@@ -184,6 +190,9 @@ protected:
     std::shared_future<std::vector<rcl_interfaces::msg::SetParametersResult>> future;
   };
   std::vector<PendingSet> pending_sets_;
+  // ⚑ FBR PROBE: lyrical-shape member the committed source actually uses.
+  std::vector<std::shared_future<
+      std::vector<rcl_interfaces::msg::SetParametersResult>>> pending_futures_;
 
   // Re-apply the current state once sets left in flight by a reload have drained.
   bool reapply_after_drain_{false};

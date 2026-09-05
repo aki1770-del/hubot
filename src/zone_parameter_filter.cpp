@@ -41,7 +41,7 @@ ZoneParameterFilter::ZoneParameterFilter()
 void ZoneParameterFilter::initializeFilter(
   const std::string & filter_info_topic)
 {
-  std::lock_guard<CostmapFilter::mutex_t> guard(*getMutex());
+  std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
 
   auto node = node_.lock();
   if (!node) {
@@ -78,7 +78,7 @@ void ZoneParameterFilter::initializeFilter(
 void ZoneParameterFilter::filterInfoCallback(
   const nav2_msgs::msg::CostmapFilterInfo::ConstSharedPtr & msg)
 {
-  std::lock_guard<CostmapFilter::mutex_t> guard(*getMutex());
+  std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
 
   auto node = node_.lock();
   if (!node) {
@@ -98,20 +98,20 @@ void ZoneParameterFilter::filterInfoCallback(
     mask_sub_.reset();
   }
 
-  if (msg->type != ZONE_PARAMETER_FILTER) {
+  if (msg->type != nav2_costmap_2d::ZONE_PARAMETER_FILTER) {
     RCLCPP_ERROR(
       logger_,
         "ZoneParameterFilter: CostmapFilterInfo type is %i, expected %i (ZONE_PARAMETER_FILTER)",
-      msg->type, ZONE_PARAMETER_FILTER);
+      msg->type, nav2_costmap_2d::ZONE_PARAMETER_FILTER);
     return;
   }
 
-  if (msg->base != BASE_DEFAULT || msg->multiplier != MULTIPLIER_DEFAULT) {
+  if (msg->base != nav2_costmap_2d::BASE_DEFAULT || msg->multiplier != nav2_costmap_2d::MULTIPLIER_DEFAULT) {
     RCLCPP_WARN(
       logger_,
       "ZoneParameterFilter: base=%f and multiplier=%f are unused by this filter "
       "(state mapping is config-driven). Expected defaults (%f, %f).",
-      msg->base, msg->multiplier, BASE_DEFAULT, MULTIPLIER_DEFAULT);
+      msg->base, msg->multiplier, nav2_costmap_2d::BASE_DEFAULT, nav2_costmap_2d::MULTIPLIER_DEFAULT);
   }
 
   filter_info_received_ = true;
@@ -130,7 +130,7 @@ void ZoneParameterFilter::filterInfoCallback(
 void ZoneParameterFilter::maskCallback(
   const nav_msgs::msg::OccupancyGrid::ConstSharedPtr & msg)
 {
-  std::lock_guard<CostmapFilter::mutex_t> guard(*getMutex());
+  std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
 
   if (!filter_mask_) {
     RCLCPP_INFO(
@@ -305,7 +305,7 @@ void ZoneParameterFilter::process(
   int /*min_i*/, int /*min_j*/, int /*max_i*/, int /*max_j*/,
   const geometry_msgs::msg::Pose & pose)
 {
-  std::lock_guard<CostmapFilter::mutex_t> guard(*getMutex());
+  std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
 
   checkPendingParameterUpdates();
 
@@ -332,7 +332,20 @@ void ZoneParameterFilter::process(
         "ZoneParameterFilter: Robot outside filter mask; resetting to nominal defaults.");
       applyState(0);
       current_state_ = 0;
-  enforcement_degraded_ = false;
+      // ⚑ CPP 2026-09-05: the latch is NOT cleared here.
+      //
+      // applyState(0) only ISSUES async set_parameters; the results arrive later
+      // in checkPendingParameterUpdates(). Clearing the latch now published
+      // `enforced: yes` on a restore nothing had confirmed — a success-shaped
+      // value inside the feature built to abolish success-shaped values
+      // (Sakichi Vision 14). It is the same defect this package names in
+      // upstream's CostmapFilter::updateCosts(), which sets current_ = true
+      // unconditionally after process() returns.
+      //
+      // The header's contract is the correct one and now the code matches it:
+      // the flag latches, and only a reload clears it, because a reload is the
+      // one event that makes the configuration it referred to meaningless.
+      publishDecision("left the filter mask; restoring nominal defaults");
     }
     return;
   }
@@ -585,7 +598,7 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
   add("zone_state", std::to_string(static_cast<int>(current_state_)));
   add("enforced", enforcement_degraded_ ? "NO" : "yes");
   add("configured", state_initialized_ ? "yes" : "not yet");
-  add("pending_parameter_sets", std::to_string(pending_sets_.size()));
+  add("pending_parameter_sets", std::to_string(pending_futures_.size()));
   add("targets", std::to_string(param_clients_.size()));
   if (!detail.empty()) {
     add("event", detail);
@@ -599,7 +612,7 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
 
 void ZoneParameterFilter::resetFilter()
 {
-  std::lock_guard<CostmapFilter::mutex_t> guard(*getMutex());
+  std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
 
   filter_info_sub_.reset();
   mask_sub_.reset();
@@ -616,11 +629,17 @@ void ZoneParameterFilter::resetFilter()
   filter_info_received_ = false;
   state_initialized_ = false;
   current_state_ = 0;
+  // ⚑ CPP 2026-09-05: the header documented "a reload clears it because the
+  // configuration it referred to is gone" and the code never did it, so the
+  // owed test named in test/ would have FAILED against the shipped contract.
+  // Documented behaviour that does not exist is worse than undocumented
+  // behaviour: a reader trusts it.
+  enforcement_degraded_ = false;
 }
 
 bool ZoneParameterFilter::isActive()
 {
-  std::lock_guard<CostmapFilter::mutex_t> guard(*getMutex());
+  std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
   return filter_mask_ != nullptr;
 }
 
