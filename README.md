@@ -1,15 +1,33 @@
 # hubot
 
-**hubot bridges a robot and a person, on the move.**
+## Mission
 
-A move is easy to state and never easy to make. Something starts at **A** and has to
-arrive at **B**, and there is always something in between — a doorway, a bay, a person
-walking through, a limit that has to hold. hubot's job is to put a **suggestion in
-front of a human while there is still time to act on it**: before the risk arrives,
-not after it has.
+> **hubot is a method to bridge a robot and a human, from the perspective of the move.**
+>
+> **A move is mobility: something starts at A and arrives at B. Between A and B there is
+> always an obstacle. To avoid collision and to make the journey a better one, hubot
+> offers the human a suggestion before the actual risk arrives.**
 
-It offers. It does not decide. **The person keeps the decision** — that is the whole
-point of a bridge rather than an override.
+Four things follow from that sentence, and every component here is built to them.
+
+**The unit is one move, A to B.** Not a feature, not a topic, not a package. If a thing
+we build does not serve a move that is underway, it does not belong here.
+
+**The obstacle is the normal case.** Something is always between A and B — a doorway, a
+bay, a person walking through, a limit that has to hold. A component whose value only
+shows up in a rare failure has mis-read the problem.
+
+**The far end of the bridge is a person.** A state number, a cost value, a boolean that
+another node consumes — that is machinery. Useful, necessary, and not the bridge. **The
+bridge ends in someone who can read it.**
+
+⚑ **Before the risk, and as an offer.** A report issued after the collision is a log.
+hubot earns its place in the window where the risk has **not yet arrived** and a person
+can still act — and what it puts there is a **suggestion**, never a command. **The person
+keeps the decision.** A component that seizes the decision has replaced the human it was
+built to serve.
+
+---
 
 The first component is a nav2 costmap filter. It applies speed and behaviour limits
 inside mapped zones, and — the part that matters — **it tells a person, in words, while
