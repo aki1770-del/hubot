@@ -337,33 +337,63 @@ protected:
 
 // ============================================================================
 // ⚑ ASSUMPTIONS OF USE — read these before relying on this filter.
-// Written 2026-09-05 by CPP against nav2 read at /home/komada/nav2ci/ws/src.
-// Every line here is a measurement, with the file position that shows it.
+// Written 2026-09-05 by CPP against upstream ros-navigation/navigation2 main
+// @ 0e9904bb (2026-09-04), fetched and re-measured 2026-09-05. Every line here
+// is a measurement, with the file position that shows it.
 //
-// AoU-1  THIS FILTER CANNOT TELL THE NAVIGATION STACK THAT ITS OUTPUT IS
-//        UNTRUSTWORTHY. The stack's own channel for that is Layer::isCurrent()
-//        -- LayeredCostmap::isCurrent() iterates filters_ (layered_costmap.cpp),
+// AoU-1  THIS FILTER CANNOT *YET* TELL THE NAVIGATION STACK THAT ITS OUTPUT IS
+//        UNTRUSTWORTHY -- BUT THE REASON IS ONE LINE, NOT AN ARCHITECTURE.
+//        ⚑ CORRECTED 2026-09-05. An earlier version of this note concluded the
+//        channel was "closed three ways" and that an integrator MUST supply the
+//        capability themselves. The three facts below are all still true and
+//        re-verified against main @ 0e9904bb; the CONCLUSION drawn from them was
+//        wrong, and it was wrong in the direction that costs an integrator work.
+//
+//        The stack's channel for "do not plan on this yet" is Layer::isCurrent()
+//        -- LayeredCostmap::isCurrent() iterates filters_
+//        (layered_costmap.cpp:291, over layered_costmap.hpp:232-233),
 //        Costmap2DROS::isCurrent() forwards it (costmap_2d_ros.hpp:186), and
-//        ControllerServer::waitForCostmap() (controller_server.cpp:668) blocks
-//        on it for `costmap_update_timeout` (default 0.30 s,
-//        parameter_handler.cpp:47) before terminating the goal with
-//        CONTROLLER_TIMED_OUT (controller_server.cpp:676, caught :634).
-//        That channel is closed to this class three ways:
+//        ControllerServer::waitForCostmap() (controller_server.cpp:671) blocks on
+//        it for `costmap_update_timeout` (default 0.30 s,
+//        parameter_handler.cpp:47-48) before throwing ControllerTimedOut
+//        (controller_server.cpp:679, caught :637).
+//
+//        THE FACTS, RE-MEASURED:
 //          (a) CostmapFilter::updateCosts() runs `setCurrent(true)`
-//              UNCONDITIONALLY after process() returns (costmap_filter.cpp:133),
-//              so any setCurrent(false) inside process() is erased immediately;
+//              unconditionally AFTER process() returns (costmap_filter.cpp:133),
+//              so any setCurrent(false) made inside process() is erased;
 //          (b) CostmapFilter::updateCosts() is declared `final`
-//              (costmap_filter.hpp:114) -- g++ refuses the override:
-//              "error: virtual function ... overriding final function";
+//              (costmap_filter.hpp:114), so the method cannot be overridden;
 //          (c) Layer::isCurrent() is not virtual (layer.hpp:138) and
-//              LayeredCostmap holds layers as shared_ptr<Layer>
-//              (layered_costmap.hpp:232-233), so it cannot be intercepted.
-//        A three-line upstream change would open it (a virtual
-//        `isFilterCurrent()` defaulting to true, used as the argument to
-//        setCurrent). Until that lands, AN INTEGRATOR MUST SUPPLY THIS
-//        THEMSELVES: subscribe to `zone_decision` and refuse to drive on
-//        `enforced: NO` or `enforced: pending`. The filter reports; it cannot
-//        stop anything.
+//              LayeredCostmap holds layers as shared_ptr<Layer>, so the READ
+//              cannot be intercepted.
+//
+//        WHAT FOLLOWS FROM THEM -- AND WHAT DOES NOT. (b) and (c) say the
+//        capability cannot be added by SUBCLASSING. They do not say it is
+//        absent. Layer::setCurrent(bool) is PUBLIC and non-virtual
+//        (layer.hpp:147, inside the `public:` region that opens at :61 and ends
+//        at :181), so this class may already call setCurrent(false) from
+//        process() today. The write happens; it is simply overwritten one line
+//        later by (a). The capability EXISTS in the base class and is ERASED by
+//        statement ORDER in the derived one -- and nav2's own header says it
+//        should not be: "A layer's current state should be managed by the
+//        protected variable current_" (layer.hpp:134-135) and, on the member
+//        itself, "Currently this var is managed by subclasses." (layer.hpp:198).
+//
+//        THE UPSTREAM FIX IS ONE STATEMENT MOVED, not a new virtual. Moving
+//        `setCurrent(true)` ahead of `process()` restores the documented
+//        contract with a byte-identical header and zero ABI surface. Our patch,
+//        with a test proven RED before and GREEN after, is at
+//        outputs/cpp/nav2_costmap_filter_setcurrent_before_process_2026_09_05.patch.
+//        (An earlier design of ours added a virtual `isFilterCurrent()`; it is
+//        RETIRED as superseded -- it changed the vtable to buy what statement
+//        order already gives.)
+//
+//        UNTIL THAT LANDS UPSTREAM, the integrator guidance is unchanged and
+//        still required: subscribe to `zone_decision` and refuse to drive on
+//        `enforced: NO` or `enforced: pending`. Not because the stack cannot
+//        carry the signal -- it can -- but because the nav2 you link against
+//        today still erases it. The filter reports; it cannot stop anything.
 //
 // AoU-2  `enforced: yes` MEANS EVERY TARGET OF THE CURRENT STATE CONFIRMED.
 //        `pending` means requested and unanswered. `NO` means at least one

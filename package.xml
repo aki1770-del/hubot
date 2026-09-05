@@ -4,9 +4,10 @@
   <name>hubot</name>
   <version>0.1.0</version>
   <description>
-    C++ navigation features for ROS 2 / nav2, shipped out-of-tree so an integrator
-    can install them without waiting for an upstream merge. First feature: a zone
-    parameter filter that degrades loudly instead of aborting the navigation node.
+    A nav2 costmap filter that applies speed and behaviour limits inside mapped
+    zones, and reports in words when a zone is not actually being enforced. When a
+    parameter push is rejected, unanswered, or names an undeclared state, the robot
+    keeps navigating and publishes a diagnostic an operator can act on.
   </description>
   <maintainer email="aki1770@gmail.com">Komada</maintainer>
   <license>Apache-2.0</license>

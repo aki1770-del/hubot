@@ -68,6 +68,8 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <map>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -86,6 +88,7 @@
 #include "nav2_costmap_2d/layered_costmap.hpp"
 #include "nav2_costmap_2d/costmap_filters/costmap_filter.hpp"
 #include "nav2_costmap_2d/costmap_filters/filter_values.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "hubot/zone_parameter_filter.hpp"
 
 using namespace std::chrono_literals;
@@ -155,6 +158,51 @@ private:
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr publisher_;
 };
 
+// ⚑ THE HUMAN-DECISION SURFACE. Feature 2 is half the package's reason to
+// exist, and until 2026-09-06 NOTHING in this file read it: every test here
+// asserted only that the process did not die. Survival is the robot's half.
+// `zone_decision` is the PERSON's half -- the level an operator tool renders
+// and the sentence a person acts on -- and a suite that proves one and not the
+// other has proved half the claim.
+//
+// This is the surface an integrator actually has: `enforcementDegraded()` is
+// public and NOTHING IN NAV2 CALLS IT, so a C++ accessor no caller invokes is
+// not a channel to a human. The DiagnosticArray is.
+class DecisionSubscriber : public rclcpp::Node
+{
+public:
+  DecisionSubscriber()
+  : Node("zpf_decision_sub")
+  {
+    subscriber_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+      "zone_decision", rclcpp::QoS(50),
+      [this](const diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr msg) {
+        for (const auto & st : msg->status) {
+          last_level_ = st.level;
+          last_message_ = st.message;
+          for (const auto & kv : st.values) {last_[kv.key] = kv.value;}
+          ++count_;
+        }
+      });
+  }
+
+  std::string value(const std::string & k) const
+  {
+    auto it = last_.find(k);
+    return it == last_.end() ? std::string("<absent>") : it->second;
+  }
+  std::string lastMessage() const {return last_message_;}
+  uint8_t lastLevel() const {return last_level_;}
+  size_t count() const {return count_;}
+
+private:
+  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr subscriber_;
+  std::map<std::string, std::string> last_;
+  std::string last_message_;
+  uint8_t last_level_{255};   // 255 = nothing ever arrived; never a valid level
+  size_t count_{0};
+};
+
 // The node whose `readonly_speed` parameter CANNOT be set. That rejection is
 // the input under test: upstream turns it into a throw, this package turns it
 // into a latched, logged degrade.
@@ -222,6 +270,9 @@ protected:
   {
     target_node_ = std::make_shared<TargetNode>();
     target_executor_.add_node(target_node_);
+    // Subscribed BEFORE the filter exists, so no transition can be missed.
+    decision_sub_ = std::make_shared<DecisionSubscriber>();
+    target_executor_.add_node(decision_sub_);
   }
 
   void TearDown() override
@@ -233,6 +284,8 @@ protected:
     mask_pub_.reset();
     if (node_) {node_executor_.remove_node(node_->get_node_base_interface());}
     node_.reset();
+    target_executor_.remove_node(decision_sub_);
+    decision_sub_.reset();
     target_executor_.remove_node(target_node_);
     target_node_.reset();
   }
@@ -298,6 +351,18 @@ protected:
     target_executor_.spin_some();
   }
 
+  // Spin until the predicate holds or the budget runs out. Returns whether it held.
+  bool pumpUntil(const std::function<bool()> & pred, std::chrono::milliseconds d)
+  {
+    auto start = node_->now();
+    while (node_->now() - start < rclcpp::Duration(d)) {
+      if (pred()) {return true;}
+      spinAll();
+      std::this_thread::sleep_for(10ms);
+    }
+    return pred();
+  }
+
   void spinFor(std::chrono::milliseconds d)
   {
     auto start = node_->now();
@@ -320,6 +385,7 @@ protected:
   pluginlib::ClassLoader<nav2_costmap_2d::Layer> loader_{
     "nav2_costmap_2d", "nav2_costmap_2d::Layer"};
   std::shared_ptr<TargetNode> target_node_;
+  std::shared_ptr<DecisionSubscriber> decision_sub_;
   nav2::LifecycleNode::SharedPtr node_;
   std::shared_ptr<nav2_costmap_2d::LayeredCostmap> layers_;
   nav2::TransformBuffer::SharedPtr tf_buffer_;
@@ -389,6 +455,71 @@ TEST_F(PluginlibLiveCostmap, B_LiveLayeredCostmap_UpdateMap_DegradesInsteadOfAbo
 
   EXPECT_DOUBLE_EQ(target_node_->get_parameter("readonly_speed").as_double(), 1.0)
     << "the read-only parameter must be untouched by the refused set";
+}
+
+// B2 — ⚑ THE HUMAN'S HALF, AND IT WAS NOT ASSERTED ANYWHERE UNTIL 2026-09-06.
+//
+// WHY (written before the act, OPS-070(B)). Test B proves the ROBOT survives.
+// That is one half of this package's claim and it is the half a machine cares
+// about. The other half is Feature 2: upstream expressed "I could not enforce
+// this zone" by killing the process; hubot replaces that with a sentence a
+// PERSON can act on. If the process lives and says nothing a human can use,
+// the package has removed an honest crash and put a silence in its place --
+// which is worse for her, not better, because a silent robot that keeps
+// driving is one she trusts.
+//
+// Measured 2026-09-06 across the whole suite before this test existed: exactly
+// ONE assertion on `level` anywhere (degrade_at_production_caller_test.cpp:899)
+// and it is on the UNDECLARED-MASK-STATE path, not on the rejected-parameter-set
+// path that is this gate's subject. ZERO assertions on the message text, on any
+// path. The sentence the README prints as the package's reason to exist was
+// never checked by anything.
+//
+// This asserts it at the production caller: pluginlib-loaded class, live
+// LayeredCostmap::updateMap(), the same refused set as test B.
+TEST_F(PluginlibLiveCostmap, B2_LiveLayeredCostmap_PublishesTheHumanDecisionSurface)
+{
+  ASSERT_TRUE(bringUp(kHubotClass));
+  ASSERT_TRUE(filterReportsActive()) << "filter never became active";
+
+  EXPECT_NO_THROW(driveUpdateMapTwice());
+
+  auto h = std::dynamic_pointer_cast<hubot::ZoneParameterFilter>(filter_);
+  ASSERT_NE(h, nullptr);
+  ASSERT_TRUE(pumpUntil([&] {return h->enforcementDegraded();}, 5s))
+    << "the rejection was never exercised -- a vacuous run must not read as a "
+       "pass, and every assertion below would be meaningless.";
+
+  // The surface must actually arrive. `count()==0` with level 255 is how a
+  // never-published topic looks, and it must not be mistaken for a verdict.
+  ASSERT_TRUE(pumpUntil([&] {return decision_sub_->count() > 0;}, 5s))
+    << "nothing was ever published on `zone_decision`. The integrator has no "
+       "channel: enforcementDegraded() is public and NOTHING IN NAV2 CALLS IT.";
+
+  ASSERT_TRUE(
+    pumpUntil(
+      [&] {
+        return decision_sub_->lastLevel() ==
+        diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+      }, 5s))
+    << "the zone is NOT being enforced and the surface does not say ERROR. "
+       "level=" << static_cast<int>(decision_sub_->lastLevel())
+    << " message=\"" << decision_sub_->lastMessage() << "\"";
+
+  // ⚑ The MESSAGE, not only the level. A level is a number; the reason this
+  // package exists is that a number is a robot's input. The sentence is the
+  // artifact a person reads, so the sentence is what must be asserted.
+  const std::string msg = decision_sub_->lastMessage();
+  EXPECT_NE(msg.find("NOT being enforced"), std::string::npos)
+    << "the message must say the zone is not being enforced. Got: \"" << msg << "\"";
+  EXPECT_NE(msg.find("Decide as if the zone's limits are not applied"), std::string::npos)
+    << "the message must tell the person what to DO about it -- that clause is "
+       "the whole of Feature 2, and it is quoted verbatim on the package's "
+       "README and in method_five_gated_build_2026_09_05.md. Got: \"" << msg << "\"";
+
+  // And the machine-readable field an operator tool keys on.
+  EXPECT_EQ(decision_sub_->value("enforced"), "NO")
+    << "three-valued `enforced` must read NO when a target refused";
 }
 
 // C -- NEGATIVE CONTROL. Without this, A and B are not evidence.
