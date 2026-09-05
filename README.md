@@ -10,19 +10,139 @@ find_package(hubot REQUIRED)   # or just add it to your workspace and build
 Then select `hubot::ZoneParameterFilter` in your costmap plugin list. It depends on
 `nav2_costmap_2d`; it does not fork or replace anything you already run.
 
-## The problem it exists for
+## How zones work, if you have not used a costmap filter before
 
-You paint a zone on a mask and configure what should change inside it — a speed cap
-near a doorway, a different footprint in a loading bay. The filter pushes those
-values to the nodes that own them.
+Skip to **What it does about it** if you already run keepout or speed filters — this
+is the same mechanism.
 
-**Sometimes the push does not land.** A target node is not up yet. It rejects the
-value. It accepts and never answers. The mask names a zone number your YAML never
-declared.
+### A zone is a colour on a picture of your map
 
-When that happens your robot is inside a zone whose limits are not applied, and
-nothing in a plain state number tells you so. **That is the case this package is
-built around.**
+A costmap filter reads a second image laid over your map, called a **mask**. It is an
+ordinary occupancy-grid image with the same resolution and origin as your map, and
+you edit it in any image editor. What matters is the **value of each pixel**:
+
+```
+0    outside every zone — normal operation
+1    zone 1
+2    zone 2
+…    up to 255
+```
+
+Paint the doorway area `1`, paint the loading bay `2`, leave everything else `0`. That
+is the whole map side of it. The mask is published by nav2's standard
+`costmap_filter_info_server` and `map_server` pair, exactly as it is for a keepout
+filter; nothing new is involved.
+
+### You say what each number means
+
+Each number is a **state**, and you describe a state by listing the parameters it
+should change and the value it should set. In your costmap YAML:
+
+```yaml
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      filters: ["zone_filter"]
+
+      zone_filter:
+        plugin: "hubot::ZoneParameterFilter"
+        filter_info_topic: "/costmap_filter_info"
+
+        # every state you use, by name
+        states: ["slow_doorway", "loading_bay"]
+
+        slow_doorway:
+          id: 1                       # the pixel value you painted
+          setpoints: ["cap_speed"]
+          cap_speed:
+            node: "/controller_server"
+            parameter: "FollowPath.max_vel_x"
+            value: 0.3
+
+        loading_bay:
+          id: 2
+          setpoints: ["cap_speed", "widen_footprint"]
+          cap_speed:
+            node: "/controller_server"
+            parameter: "FollowPath.max_vel_x"
+            value: 0.15
+          widen_footprint:
+            node: "/local_costmap/local_costmap"
+            parameter: "robot_radius"
+            value: 0.55
+
+        # what to restore when the robot leaves every zone (pixel value 0)
+        # ⚑ SEE THE WARNING BELOW — this block does not work in nested YAML.
+        nominal_defaults: ["normal_speed", "normal_footprint"]
+        nominal_defaults.normal_speed:
+          node: "/controller_server"
+          parameter: "FollowPath.max_vel_x"
+          value: 1.0
+        nominal_defaults.normal_footprint:
+          node: "/local_costmap/local_costmap"
+          parameter: "robot_radius"
+          value: 0.35
+```
+
+`id` is the pixel value. `1` to `255` are yours; **`0` is reserved** and means *leave
+every zone* — that is when `nominal_defaults` is restored.
+
+> ### ⚑ Two warnings about this example, both measured 2026-09-06
+>
+> **1. `nominal_defaults` cannot be written as nested YAML, and we do not yet have a
+> form that is proven to load.** The filter reads `<filter>.nominal_defaults` as a
+> **string array** (`src/zone_parameter_filter.cpp:257`) and also reads
+> `<filter>.nominal_defaults.<name>.node` as children of that same key (`:260`). In a
+> ROS 2 parameter file one key cannot be both a sequence and a mapping. The dotted
+> form printed above is written the only way the two can coexist in one document, and
+> **whether the parameter loader accepts it is untested.** Until it is, set those
+> entries from a launch file or the command line, where the dotted names are exactly
+> what the code reads. `states` does **not** have this problem — the state names are
+> different keys from `states` itself.
+>
+> **2. No YAML file has ever configured this filter.** The package contains **zero**
+> `.yaml` files and **zero** tests that load parameters from one; every test sets the
+> parameters programmatically. So the configuration path *you* would use is the one
+> path this package has never exercised. The parameter **names** above are read
+> straight from the source and are correct. The **file form** is not yet verified.
+
+### What actually happens when the robot drives in
+
+On each costmap update the filter reads the mask pixel under the robot's pose. When
+that value changes, it calls **`set_parameters` on the nodes you named**.
+
+⚑ **This is the part worth understanding, because everything else on this page follows
+from it.** `max_vel_x` does not belong to the costmap. It belongs to
+`controller_server`, **a different process**. The filter does not set a variable — it
+sends a request across ROS to another node and waits for that node to answer.
+
+So driving into a doorway does this:
+
+```
+mask pixel under the robot goes 0 → 1
+  → set_parameters(/controller_server, FollowPath.max_vel_x = 0.3)
+  → /controller_server replies: accepted
+  → the robot slows down
+```
+
+And driving out reverses it, restoring `nominal_defaults`.
+
+### And sometimes the reply does not come
+
+That request is a call to another process, and calls to other processes fail:
+
+- `/controller_server` **has not started yet**, so nothing is listening;
+- it **rejects** the value — the parameter is read-only, or out of its declared range;
+- it **accepts and never answers**, because it is wedged or the message was dropped;
+- the mask names a state your YAML **never declared** — you painted `3` and configured
+  only `1` and `2`.
+
+In every one of those cases **the robot is inside the doorway and still doing a metre a
+second.** The zone is painted, the configuration is right, and the limit is not on.
+
+Nothing in a plain state number tells you that. A number says *where the robot is*; it
+does not say *whether what you asked for actually happened.* **That gap is what this
+package exists for.**
 
 ## What it does about it
 
