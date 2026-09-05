@@ -28,7 +28,14 @@ built around.**
 
 **It keeps navigating, and it says what went wrong.** Every failure is logged at
 `ERROR` with its reason, the filter latches `enforcementDegraded()`, and the costmap
-keeps ticking. Nothing is swallowed and nothing takes the node down.
+keeps ticking. On that path nothing is swallowed and nothing takes the node down.
+
+⚑ **Scoped 2026-09-06; it used to be unqualified.** Three
+`throw std::runtime_error{"Failed to lock node"}` remain, at
+`src/zone_parameter_filter.cpp:48` (`initializeFilter`), `:103` (`filterInfoCallback`) and
+`:172` (`loadStateConfig`). None is on the `process()` / `updateCosts()` path that this
+package is about, and the upstream filter carries the same three — but nothing above them
+handles an exception either, so "nothing takes the node down" was more than we had shown.
 
 That choice is deliberate and it has a cost, so it is stated plainly: a filter that
 carries on has not fixed anything — it has handed you a decision you would not
@@ -64,24 +71,70 @@ one.
 
 ## Read this before you deploy it
 
+**⚑ THIS DOES NOT BUILD AGAINST A RELEASED nav2. Check yours before you plan on it.**
+
+`src/zone_parameter_filter.cpp:119` and `:123` use `nav2_costmap_2d::ZONE_PARAMETER_FILTER`.
+That constant is **absent from every nav2 release**. Measured 2026-09-06 by building this
+package against upstream tag `1.5.1` (commit `a6354f3f`), from a clean workspace:
+
+```
+src/zone_parameter_filter.cpp:119:37: error: 'ZONE_PARAMETER_FILTER' is not a member of 'nav2_costmap_2d'
+```
+
+Absent from tag `1.5.0` and tag `1.5.1`; present on branches `main` and `lyrical`. **So today
+this package installs only on a nav2 branch HEAD.** Whether anything else also blocks a release
+build is **UNVERIFIED** — the compiler stopped at the first error and we did not patch past it.
+
+⚑ **A version number will not tell you which nav2 you have.** Tag `1.5.1` (`a6354f3f`) and
+`lyrical` HEAD (`6f23b11c`) both declare `<version>1.5.1</version>`, and this package builds
+against exactly one of them. Check for the constant, not the number:
+
+```
+grep -r ZONE_PARAMETER_FILTER "$(ros2 pkg prefix nav2_costmap_2d)"/include
+```
+
 **⚑ hubot cannot stop your robot, and you must supply that yourself.**
 
 nav2's channel for "this layer's output is untrustworthy" is `Layer::isCurrent()`,
 which `ControllerServer::waitForCostmap()` gates on before terminating a goal. That
-channel is closed to a derived filter three ways, measured 2026-09-05 on released
-`lyrical`: `CostmapFilter::updateCosts()` calls `setCurrent(true)` unconditionally
-after `process()` returns; `updateCosts()` is declared `final`, so the override does
-not compile; and `Layer::isCurrent()` is not virtual. `enforcementDegraded()` is
-public and nothing in nav2 calls it.
+channel is not open to this filter as shipped. Three facts, re-verified 2026-09-06
+against released nav2 **1.5.1** (tag `a6354f3f`): `CostmapFilter::updateCosts()` calls
+`setCurrent(true)` unconditionally *after* `process()` returns
+(`costmap_filter.cpp:133`); `updateCosts()` is declared `final`
+(`costmap_filter.hpp:114`); and `Layer::isCurrent()` is not virtual (`layer.hpp:138`).
+`enforcementDegraded()` is public and nothing in nav2 calls it.
+
+⚑ **CORRECTED 2026-09-06. This paragraph said the channel was *"closed to a derived filter
+three ways, measured on released `lyrical`"*. Two things were wrong with that.** First,
+there is no "released `lyrical`" — `lyrical` is a branch; the releases are tags. Second,
+**this package's own header had already retracted the "closed three ways" conclusion**
+(`include/hubot/zone_parameter_filter.hpp`, AoU-1) on the ground that
+`Layer::setCurrent(bool)` is **public** (`layer.hpp:147`, inside the `public:` region that
+opens at `:61` and ends at `:181`, verified 2026-09-06) — so the capability exists in the
+base class and is erased by *statement order* in the derived one, not by an architecture.
+The retracted sentence was restated here in the same commit that corrected the header.
+**What you must do is unchanged either way**, so the instruction below still stands.
 
 **So: subscribe to `zone_decision` and refuse to drive on `enforced: NO` or
 `pending`.** If you do not, hubot has told you and nothing has listened.
 
-**It has never run on a robot.** It builds green against ROS `lyrical` with
-`nav2_costmap_2d` 1.5.1 and the plugin library `dlopen`s with zero undefined
-symbols; the behaviour above is verified through `CostmapFilter::updateCosts()`,
-the caller production uses. That is a gtest process, not a vehicle. Nothing here has
-run on real hardware.
+**It has never run on a robot.** Verified 2026-09-06 from a clean workspace against
+**upstream `lyrical` branch HEAD `6f23b11c`, with no local nav2 patches on the path**:
+`colcon build` green, `ldd -r` reports zero undefined symbols, `pluginlib` resolves
+`hubot::ZoneParameterFilter` out of the ament index, and 21 of 21 tests pass — including a
+live `LayeredCostmap::updateMap()` and a **negative control that requires upstream's own
+filter, loaded from that same build, to throw out of `updateMap()` on the same input**. It
+does (`"ZoneParameterFilter: set_parameters failed: parameter 'readonly_speed' cannot be set
+because it is read-only"`), so the harness can see the failure it rules out.
+
+⚑ **CORRECTED 2026-09-06 — this bound previously read *"builds green against ROS `lyrical`
+with `nav2_costmap_2d` 1.5.1"*. The tree it was green against declared `<version>1.5.0</version>`
+and carried four local nav2 modifications nothing warned about; and against *released* 1.5.1 it
+does not build at all (see the first bound above). A build inside a tree that may hold your own
+edits says nothing about a stranger's build.**
+
+That is a gtest process, not a vehicle. Nothing here has run on real hardware, and nothing here
+has run inside a real `controller_server`.
 
 **A confirmed set means the target accepted the value, not that it still holds it.**
 Anything else may set the same parameter afterwards and this filter will not notice.
@@ -94,32 +147,6 @@ last published value simply stands. The `DiagnosticArray` carries a header stamp
 check it.
 
 **It is QM-class software. Nothing here is safety-certified.**
-
-## Defects found in this package's own honesty, and fixed
-
-Recorded because a package about trustworthy reporting has no standing to hide its
-own lapses. All five were found and fixed 2026-09-05.
-
-- `applyState()` threw on a mask value no state declared — the same abort this
-  package removes from the parameter path, still open on the mask data path, where
-  one mis-painted pixel reaches it.
-- Removing that throw was the easier half. The undeclared value was still recorded
-  as the current state, so the next transition's reset missed and the previous
-  zone's limit rode into a zone that never asked for it. Measured: 0.2 m/s where
-  1.0 was required.
-- `resetFilter()` cleared the fault flag on the stated ground that the configuration
-  it referred to was gone. The configuration was never cleared at all, while
-  `CostmapFilter::reset()` re-runs the config load over it and `nominal_defaults_`
-  is filled with `push_back`. So `ClearEntireCostmap` — which sits in seven of
-  nav2's default behaviour trees — erased the fault while the fault stood, and
-  doubled the nominal-defaults list every time it ran.
-- `enforced: yes` was published on the same cycle the sets were issued, with zero
-  confirmations. The code applied its own principle leaving a zone and violated it
-  entering one.
-- A target that never answered was reported as enforced, forever. `kMaxPendingSets`
-  was declared to bound exactly that and referenced zero times — and could not have
-  caught it anyway, since one silent set sits at a count of one indefinitely. A
-  deadline does that job now.
 
 ## Lineage and licence
 
