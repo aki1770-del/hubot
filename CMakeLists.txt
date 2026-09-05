@@ -1,8 +1,9 @@
-# ⚑ FBR TRIAGE PROBE — NOT hubot's committed CMakeLists.txt.
-# Scratchpad-only. Purpose: get past the CONFIGURE failure at the committed
-# file's line 31 (`ament_target_dependencies` removed in this ament era) so the
-# blockers BEHIND it can be enumerated in one pass. This proves nothing about
-# the committed tree.
+# hubot build file.
+#
+# This replaced an older CMake written against a removed ament idiom
+# (`ament_target_dependencies`), which made the package fail at CONFIGURE --
+# before a compiler ever ran. Dependencies are linked here as exported targets
+# instead, which is what nav2_costmap_2d itself does on this branch.
 cmake_minimum_required(VERSION 3.10)
 project(hubot)
 if(NOT CMAKE_CXX_STANDARD)
@@ -81,7 +82,21 @@ if(BUILD_TESTING)
     test/degrade_at_production_caller_test.cpp TIMEOUT 180)
   target_link_libraries(degrade_at_production_caller_test ${hubot_test_deps})
 
-  # THE SURVIVAL PROBE -- a separate EXECUTABLE, not a gtest target.
+  # Loads the filter the way nav2 does -- by pluginlib class name out of the
+  # ament index, not by dlopen -- and drives it through a live
+  # LayeredCostmap::updateMap(). Carries a negative control that requires the
+  # UPSTREAM filter to throw on the same input through the same harness.
+  ament_add_gtest(pluginlib_live_costmap_test
+    test/pluginlib_live_costmap_test.cpp TIMEOUT 300)
+  target_link_libraries(pluginlib_live_costmap_test ${hubot_test_deps})
+
+  # ⚑ THE SURVIVAL PROBE — a separate EXECUTABLE, not a gtest target.
+  # The package claims it DEGRADES where upstream ABORTS; upstream's abort IS
+  # process death, so the oracle must OUTLIVE the failure. An in-process
+  # EXPECT_NO_THROW is skipped by abort/exit/terminate-on-another-thread/deadlock,
+  # and a gtest death test cannot help because it forks WITHOUT exec (fork clones
+  # only the calling thread; a child asserting SURVIVAL then deadlocks on a mutex
+  # another thread held -- measured, 3-minute hang, 2026-09-05).
   # fork+execv gives the process boundary that fork alone does not.
   add_executable(zpf_survival_probe test/zpf_survival_probe.cpp)
   target_link_libraries(zpf_survival_probe ${hubot_test_deps})

@@ -52,6 +52,24 @@ void ZoneParameterFilter::initializeFilter(
   state_event_topic_ =
     node->declare_or_get_parameter<std::string>(
     name_ + "." + "state_event_topic", std::string("zone_filter_state"));
+
+  // ⚑ How long a set_parameters round-trip may take before the target is
+  // reported as not carrying the zone. <= 0 disables the deadline and restores
+  // waiting forever, which is what this filter did before 2026-09-05 -- and
+  // waiting forever reports success forever. Configurable because 5 s is a
+  // guess about somebody else's robot; disabling it is a choice an integrator
+  // should have to make on purpose.
+  set_parameters_timeout_ =
+    node->declare_or_get_parameter<double>(
+    name_ + "." + "set_parameters_timeout", 5.0);
+  if (set_parameters_timeout_ <= 0.0) {
+    RCLCPP_WARN(
+      logger_,
+      "ZoneParameterFilter: set_parameters_timeout is %.3f (<= 0), so a target "
+      "that never answers will never be detected and the zone will be reported "
+      "as enforced on it indefinitely.",
+      set_parameters_timeout_);
+  }
   filter_info_topic_ = joinWithParentNamespace(filter_info_topic);
   RCLCPP_INFO(
     logger_,
@@ -298,6 +316,25 @@ void ZoneParameterFilter::loadStateConfig()
     logger_,
     "ZoneParameterFilter: %zu AsyncParametersClient(s) built at init.",
     param_clients_.size());
+
+  // ⚑ A fault is a claim about a target we manage. If a reload stops naming a
+  // target at all, we no longer have standing to assert anything about it, so
+  // the claim is dropped -- and ONLY then. This is a deliberate operator act
+  // (someone edited the configuration), not a recovery behaviour, which is the
+  // distinction resetFilter() turns on.
+  for (auto it = degraded_targets_.begin(); it != degraded_targets_.end(); ) {
+    if (all_target_nodes.count(*it) == 0) {
+      RCLCPP_WARN(
+        logger_,
+        "ZoneParameterFilter: dropping the degraded mark on '%s'; the reloaded "
+        "configuration no longer names it as a target.",
+        it->c_str());
+      it = degraded_targets_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  enforcement_degraded_ = !degraded_targets_.empty();
 }
 
 void ZoneParameterFilter::process(
@@ -330,8 +367,10 @@ void ZoneParameterFilter::process(
       RCLCPP_WARN(
         logger_,
         "ZoneParameterFilter: Robot outside filter mask; resetting to nominal defaults.");
-      applyState(0);
+      applyState(0);  // state 0 is always declared; it restores nominal_defaults.
       current_state_ = 0;
+      mask_state_ = 0;
+      mask_state_undeclared_ = false;
       // ⚑ CPP 2026-09-05: the latch is NOT cleared here.
       //
       // applyState(0) only ISSUES async set_parameters; the results arrive later
@@ -366,7 +405,51 @@ void ZoneParameterFilter::process(
     return;  // No change.
   }
 
-  applyState(new_state);
+  // ⚑ CPP 2026-09-05 — P-1. applyState() USED TO RETURN void AND THROW HERE.
+  // The throw is gone; returning false without this guard would have been only
+  // half the fix, and the worse half. Control still reached the assignment
+  // below, so the filter recorded a state it had NOT applied: the previous
+  // zone's overrides stayed on the targets, `current_state_` named a state that
+  // is not in `state_param_map_`, and the NEXT transition's N-only reset block
+  // (applyState, below) then missed its lookup and reset NOTHING -- carrying the
+  // old zone's limits into a zone that never declared them, until some later
+  // exit-to-nominal happened to restore everything.
+  //
+  // So the state is committed only when it was actually applied. When it was
+  // not, `current_state_` keeps naming the state whose values are genuinely in
+  // force, which is the truth, and `mask_state_` carries where the mask says we
+  // are. Those two disagreeing IS the fault, and both are published.
+  if (!applyState(new_state)) {
+    const bool newly_undeclared = !mask_state_undeclared_ || mask_state_ != new_state;
+    mask_state_ = new_state;
+    mask_state_undeclared_ = true;
+    if (newly_undeclared) {
+      // Only on entry to the condition: process() runs at the costmap rate and
+      // the robot can sit on this cell indefinitely.
+      publishDecision(
+        "mask state " + std::to_string(static_cast<int>(new_state)) +
+        " is not declared; no zone limits were applied for it");
+    }
+    return;
+  }
+  mask_state_ = new_state;
+  mask_state_undeclared_ = false;
+
+  // ⚑ FSE 2026-09-05 — THE ASSIGNMENT MOVED ABOVE THE PUBLISHES, AND THAT IS
+  // THE WHOLE FIX.
+  //
+  // publishDecision() renders `current_state_`. It used to run BEFORE this
+  // assignment, so on entering zone 3 the human-decision surface published
+  // `zone_state: 0` and "Outside any zone; nominal defaults are in force." —
+  // the OPPOSITE of the truth, at the exact moment the comment below says a
+  // human decision is due. The first transition also published
+  // `configured: not yet`, because state_initialized_ was still false.
+  //
+  // Order is safe: applyState() is the only reader of the previous
+  // current_state_/state_initialized_ (it uses them to compute the N-only
+  // resets) and has already returned.
+  current_state_ = new_state;
+  state_initialized_ = true;
 
   if (state_event_pub_) {
     auto event_msg = std::make_unique<std_msgs::msg::UInt8>();
@@ -376,26 +459,45 @@ void ZoneParameterFilter::process(
   // ⚑ HUBOT: the robot gets the byte; the person gets the basis, in the
   // same breath. A transition is exactly when a human decision is due.
   publishDecision("zone transition");
-
-  current_state_ = new_state;
-  state_initialized_ = true;
 }
 
-void ZoneParameterFilter::applyState(uint8_t new_state)
+bool ZoneParameterFilter::applyState(uint8_t new_state)
 {
   if (new_state == 0) {
     resetToNominal();
     RCLCPP_INFO(logger_, "ZoneParameterFilter: Entered state 0 (reset to nominal).");
-    return;
+    return true;
   }
 
   auto it = state_param_map_.find(new_state);
   if (it == state_param_map_.end()) {
-    throw std::runtime_error(
-            std::string("ZoneParameterFilter: unknown state ") +
-            std::to_string(new_state) +
-            " encountered; declare a state with id " +
-            std::to_string(new_state) + " under the filter's `states` list.");
+    // ⚑ CPP 2026-09-05 — THE SECOND ABORT PATH, closed by the same rule as the
+    // first. This THREW; process() calls applyState() bare and
+    // CostmapFilter::updateCosts() is bare (costmap_filter.cpp:124-134), so a
+    // mask cell carrying an id no state declares killed the navigation node --
+    // the same chain checkPendingParameterUpdates() was fixed to stop. Reached
+    // by MASK DATA, not by configuration: a single mis-painted pixel is enough.
+    // test/zpf_survival_probe.cpp mode `unknown-state` observed exactly that,
+    // out-of-process, before this change: "DIED by signal 6 (Aborted)".
+    //
+    // ⚑ THE CONVENTION CLAIM, CORRECTED. An earlier draft of this comment said
+    // the three sibling filters "not one of them throws". That is false and a
+    // maintainer refutes it with one grep: speed_filter.cpp throws at :66 and
+    // :168, keepout_filter.cpp at :66, :101 and :146, binary_filter.cpp at :66
+    // and :109 -- seven sites. The TRUE claim is stronger and is the one that
+    // bears on this line: EVERY ONE of those seven is the same node-lock guard
+    // (`throw std::runtime_error{"Failed to lock node"}`) in initializeFilter()
+    // or a subscription callback. NOT ONE of them throws from process(), and
+    // NOT ONE throws on a data-dependent condition. Three independent sites,
+    // one pattern: in this filter family, the data path does not throw.
+    RCLCPP_ERROR_THROTTLE(
+      logger_, *(clock_), 2000,
+      "ZoneParameterFilter: mask state %u is not declared under the filter's "
+      "`states` list; NO zone limits were applied for it and the parameters in "
+      "force are still state %u's. Declare a state with id %u, or correct the "
+      "mask.",
+      new_state, current_state_, new_state);
+    return false;
   }
 
   std::set<std::pair<std::string, std::string>> m_keys;
@@ -462,6 +564,7 @@ void ZoneParameterFilter::applyState(uint8_t new_state)
     "ZoneParameterFilter: Entered state %u (reset %zu N-only parameter(s); "
     "applied %zu parameter(s) across %zu node(s)).",
     new_state, reset_count, it->second.size(), per_node_params.size());
+  return true;
 }
 
 void ZoneParameterFilter::resetToNominal()
@@ -471,32 +574,113 @@ void ZoneParameterFilter::resetToNominal()
   }
 }
 
+void ZoneParameterFilter::markTargetDegraded(
+  const std::string & target_node, const std::string & why)
+{
+  const bool first = degraded_targets_.insert(target_node).second;
+  unconfirmed_targets_.erase(target_node);
+  enforcement_degraded_ = !degraded_targets_.empty();
+  if (first) {
+    RCLCPP_ERROR(
+      logger_,
+      "ZoneParameterFilter: target '%s' is NOT carrying zone %u's values: %s",
+      target_node.c_str(), current_state_, why.c_str());
+    publishDecision("target '" + target_node + "' not enforcing: " + why);
+  }
+}
+
+void ZoneParameterFilter::markTargetHealthy(const std::string & target_node)
+{
+  unconfirmed_targets_.erase(target_node);
+  // ⚑ The ONLY retraction path. A fault against a target is a claim about that
+  // target's live parameter value, and the only thing that refutes it is that
+  // target answering successfully. Not a costmap clear, not a reload, not time.
+  if (degraded_targets_.erase(target_node) > 0) {
+    enforcement_degraded_ = !degraded_targets_.empty();
+    RCLCPP_INFO(
+      logger_,
+      "ZoneParameterFilter: target '%s' accepted a set and is no longer "
+      "reported degraded.%s",
+      target_node.c_str(),
+      enforcement_degraded_ ? " Other targets are still degraded." : "");
+    publishDecision("target '" + target_node + "' accepted a set");
+  }
+}
+
 void ZoneParameterFilter::issueAsyncSetParameters(
   const std::string & target_node,
   const std::vector<rclcpp::Parameter> & params)
 {
   auto client_it = param_clients_.find(target_node);
   if (client_it == param_clients_.end()) {
-    RCLCPP_ERROR(
-      logger_,
-      "ZoneParameterFilter: no client for target_node '%s' "
-      "(should have been built at config-load).",
-      target_node.c_str());
+    // ⚑ This used to log and return, latching nothing -- so a target with no
+    // client produced a completely silent unenforcement while publishDecision()
+    // went on reporting `enforced: yes`. Same success-shaped value, different
+    // door.
+    markTargetDegraded(
+      target_node, "no parameter client exists for it (config-load did not build one)");
     return;
   }
 
-  pending_futures_.push_back(client_it->second->set_parameters(params));
+  // ⚑ kMaxPendingSets, referenced ZERO times before 2026-09-05 while its
+  // comment claimed it bounded a never-answering target. It cannot do that --
+  // one silent set sits at a count of one forever. The deadline in
+  // checkPendingParameterUpdates() does that job; this bounds GROWTH against a
+  // target answering slower than the costmap rate, and the oldest victim is
+  // reported rather than dropped quietly.
+  while (pending_sets_.size() >= kMaxPendingSets) {
+    const std::string dropped = pending_sets_.front().target_node;
+    pending_sets_.erase(pending_sets_.begin());
+    markTargetDegraded(
+      dropped,
+      "more than " + std::to_string(kMaxPendingSets) +
+      " sets are in flight; the oldest was discarded unanswered");
+  }
+
+  unconfirmed_targets_.insert(target_node);
+  pending_sets_.push_back(
+    PendingSet{
+      target_node,
+      client_it->second,
+      client_it->second->set_parameters(params),
+      clock_->now()});
 }
 
 void ZoneParameterFilter::checkPendingParameterUpdates()
 {
   // A silently-swallowed set failure would leave the robot on the value the
-  // safety zone tried to change (worse than surfacing it), so failures throw
-  // rather than get logged-and-ignored.
-  // wait_for(0s) polls without blocking the costmap update loop
-  auto it = pending_futures_.begin();
-  while (it != pending_futures_.end()) {
-    if (it->wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+  // safety zone tried to change, so every failure is surfaced. It is surfaced
+  // by marking the TARGET degraded and continuing, never by throwing: this
+  // function is called from the top of process(), process() is reached from
+  // CostmapFilter::updateCosts(), which is bare, from LayeredCostmap, which has
+  // no try/catch anywhere -- so a throw here is std::terminate and the
+  // navigation node dies. Sakichi Vision 20: the halt must cost less than the
+  // defect.
+  // wait_for(0s) polls without blocking the costmap update loop.
+  const rclcpp::Time now = clock_->now();
+  auto it = pending_sets_.begin();
+  while (it != pending_sets_.end()) {
+    if (it->future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+      // ⚑ F-2, THE FAILURE THAT LOOKS EXACTLY LIKE SUCCESS. Before 2026-09-05
+      // this branch was a bare `++it`: a future that never becomes ready was
+      // never examined, so there was no failure, no latch, and the filter went
+      // on publishing `enforced: yes` and "Zone N is in force" forever while
+      // the zone's limits were on nothing. The target node crashed, was never
+      // brought up, is still configuring, or the namespace in the YAML has a
+      // typo -- every one of those produces silence, and silence was reported
+      // as enforcement. A rejection is the EASY case; somebody answered.
+      if (set_parameters_timeout_ > 0.0 &&
+        (now - it->issued_at).seconds() > set_parameters_timeout_)
+      {
+        const std::string target = it->target_node;
+        it = pending_sets_.erase(it);
+        markTargetDegraded(
+          target,
+          "no answer within " + std::to_string(set_parameters_timeout_) +
+          "s of the set being issued; an unanswered request is not a "
+          "successful one");
+        continue;
+      }
       ++it;
       continue;
     }
@@ -504,8 +688,9 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
     // Copy the shared state out before erasing: the copy keeps the value that
     // get() returns a reference to alive for this iteration, and erasing first
     // means a service-side exception rethrown by get() surfaces exactly once.
-    const auto ready_future = *it;
-    it = pending_futures_.erase(it);
+    const auto ready_future = it->future;
+    const std::string target = it->target_node;
+    it = pending_sets_.erase(it);
 
     // ⚑ HUBOT CHANGE — the whole reason this package exists.
     //
@@ -526,26 +711,28 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
     // rest of the stack can decide.
     try {
       const auto & results = ready_future.get();
+      bool all_ok = true;
       for (const auto & r : results) {
         if (!r.successful) {
-          enforcement_degraded_ = true;
-          RCLCPP_ERROR(
-            logger_,
-            "ZoneParameterFilter: set_parameters FAILED and the zone is NOT being "
-            "enforced on that target: %s", r.reason.c_str());
-          publishDecision("parameter set rejected: " + r.reason);
+          all_ok = false;
+          // ⚑ The message names the target now. It used to say "on that
+          // target" and never say which -- an integrator reading the log of a
+          // multi-target zone could not tell what to go and look at.
+          markTargetDegraded(target, "set_parameters rejected it: " + r.reason);
         }
+      }
+      if (all_ok) {
+        markTargetHealthy(target);
       }
     } catch (const std::exception & ex) {
       // A service-side exception rethrown by get(). Same rule.
-      enforcement_degraded_ = true;
-      RCLCPP_ERROR(
-        logger_,
-        "ZoneParameterFilter: parameter set threw and the zone is NOT being "
-        "enforced: %s", ex.what());
-      publishDecision(std::string("parameter set threw: ") + ex.what());
+      markTargetDegraded(target, std::string("set_parameters threw: ") + ex.what());
     }
   }
+
+  // ⚑ The good news needs a publish too. Without this the surface says
+  // `pending` once and falls silent for a filter that is working perfectly.
+  publishDecisionOnStatusChange();
 }
 
 // ⚑ HUBOT — THE HUMAN-DECISION SURFACE.
@@ -564,21 +751,75 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
 // say something to a person, it needs no new interface package, and every
 // operator tool already renders it. The robot's UInt8 topic is untouched: this
 // ADDS a surface, it does not replace one.
+std::string ZoneParameterFilter::enforcementToken() const
+{
+  if (enforcement_degraded_ || mask_state_undeclared_) {
+    return "NO";
+  }
+  return unconfirmed_targets_.empty() ? "yes" : "pending";
+}
+
+void ZoneParameterFilter::publishDecisionOnStatusChange()
+{
+  const std::string token = enforcementToken();
+  if (token == last_published_token_) {
+    return;
+  }
+  // ⚑ Caught by CPP_N3 on its second run, and it is the SAME defect a third
+  // time. Before a state has ever been applied there is nothing outstanding
+  // and nothing degraded, so the token computes to "yes" -- and the filter
+  // announced `enforced: yes` at startup, having set nothing, confirmed
+  // nothing, and not yet read the mask. A reassuring word about work not done
+  // is the exact shape N-3 is about. The cache is updated silently so the
+  // first REAL transition still registers as a change.
+  if (!state_initialized_) {
+    last_published_token_ = token;
+    return;
+  }
+  publishDecision("enforcement is now: " + token);
+}
+
 void ZoneParameterFilter::publishDecision(const std::string & detail)
 {
   if (!decision_pub_) {
     return;
   }
+  last_published_token_ = enforcementToken();
   diagnostic_msgs::msg::DiagnosticStatus st;
   st.name = "zone_parameter_filter";
   st.hardware_id = global_frame_;
 
+  // ⚑ CPP 2026-09-05 — N-3. `enforced` IS THREE-VALUED NOW, and the middle
+  // value is the finding. This block used to publish `enforced: yes` and
+  // "Zone N is in force." on the SAME CYCLE the async sets were issued, with
+  // zero confirmations in hand -- while the header, in this same package,
+  // states that reporting `enforced: yes` on an unconfirmed restore is exactly
+  // the success-shaped value this feature exists to abolish. The code applied
+  // its own principle on the leave path and violated it on the enter path.
+  // `pending` is not a weaker `yes`; an operator must read it as `NO` until it
+  // resolves one way or the other.
+  const bool unconfirmed = !unconfirmed_targets_.empty();
   if (enforcement_degraded_) {
     st.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
     st.message =
       "Zone " + std::to_string(static_cast<int>(current_state_)) +
       " is NOT being enforced on at least one target. Decide as if the zone's "
       "limits are not applied.";
+  } else if (mask_state_undeclared_) {
+    st.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+    st.message =
+      "The mask reports zone " + std::to_string(static_cast<int>(mask_state_)) +
+      " at the robot's pose and no state with that id is configured. No limits "
+      "were applied for it; what is in force is still zone " +
+      std::to_string(static_cast<int>(current_state_)) +
+      "'s. Decide as if this zone has no limits.";
+  } else if (unconfirmed) {
+    st.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    st.message =
+      "Zone " + std::to_string(static_cast<int>(current_state_)) +
+      " has been REQUESTED on " + std::to_string(unconfirmed_targets_.size()) +
+      " target(s) and none of them has confirmed yet. Do not rely on its "
+      "limits until this reads yes.";
   } else if (current_state_ == 0) {
     st.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
     st.message = "Outside any zone; nominal defaults are in force.";
@@ -596,9 +837,15 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
       st.values.push_back(kv);
     };
   add("zone_state", std::to_string(static_cast<int>(current_state_)));
-  add("enforced", enforcement_degraded_ ? "NO" : "yes");
+  // ⚑ The state whose values are in force and the state the mask reports are
+  // different facts, and they diverge exactly when something is wrong. One
+  // number could never carry that, which is why both are published.
+  add("mask_state", std::to_string(static_cast<int>(mask_state_)));
+  add("enforced", last_published_token_);
   add("configured", state_initialized_ ? "yes" : "not yet");
-  add("pending_parameter_sets", std::to_string(pending_futures_.size()));
+  add("unconfirmed_targets", std::to_string(unconfirmed_targets_.size()));
+  add("degraded_targets", std::to_string(degraded_targets_.size()));
+  add("pending_parameter_sets", std::to_string(pending_sets_.size()));
   add("targets", std::to_string(param_clients_.size()));
   if (!detail.empty()) {
     add("event", detail);
@@ -629,12 +876,45 @@ void ZoneParameterFilter::resetFilter()
   filter_info_received_ = false;
   state_initialized_ = false;
   current_state_ = 0;
-  // ⚑ CPP 2026-09-05: the header documented "a reload clears it because the
-  // configuration it referred to is gone" and the code never did it, so the
-  // owed test named in test/ would have FAILED against the shipped contract.
-  // Documented behaviour that does not exist is worse than undocumented
-  // behaviour: a reader trusts it.
-  enforcement_degraded_ = false;
+  mask_state_ = 0;
+  mask_state_undeclared_ = false;
+
+  // ⚑ CPP 2026-09-05 — N-1, AND THE FIX IS THE OPPOSITE OF THE ONE THAT WAS
+  // HERE. This line used to read `enforcement_degraded_ = false;`, justified in
+  // the header by "a reload clears it because the configuration it referred to
+  // is gone". Both halves of that were false.
+  //
+  // (1) THE CONFIGURATION WAS NOT GOING ANYWHERE. `state_param_map_`,
+  //     `nominal_defaults_` and `param_clients_` had no `.clear()` anywhere in
+  //     this translation unit -- zero occurrences each. And
+  //     CostmapFilter::reset() (costmap_filter.cpp:103) is
+  //     `resetFilter(); initializeFilter(...); setCurrent(false);` -- so
+  //     loadStateConfig() re-ran over those same containers, and
+  //     `nominal_defaults_[node].push_back(...)` APPENDS. Every reload
+  //     duplicated every nominal default, without bound, and kept clients for
+  //     targets the new configuration had dropped. The clears below are what
+  //     the header always said was happening.
+  //
+  // (2) THE FLAG IS NOT A CLAIM ABOUT THE CONFIGURATION. It is a claim about a
+  //     TARGET NODE'S LIVE PARAMETER VALUE, which no reload of a costmap filter
+  //     reaches. And the path is routine, not exceptional: ClearEntireCostmap
+  //     appears in SEVEN of nav2's default behaviour trees and arrives here via
+  //     Costmap2DROS::resetLayers() (costmap_2d_ros.cpp:719). An ordinary
+  //     recovery erased the fault flag while the fault stood -- and with it,
+  //     the one signal an integrator had.
+  //
+  // So `degraded_targets_` and `enforcement_degraded_` SURVIVE. They are
+  // retracted by markTargetHealthy(), on a set that actually comes back
+  // successful, and by nothing else. Pending sets DO go: they belong to the
+  // discarded configuration, and leaving them was its own defect -- their
+  // results would have re-latched against a configuration that no longer
+  // existed.
+  pending_sets_.clear();
+  unconfirmed_targets_.clear();
+  last_published_token_.clear();  // a cache; a stale one would suppress a publish
+  state_param_map_.clear();
+  nominal_defaults_.clear();
+  param_clients_.clear();
 }
 
 bool ZoneParameterFilter::isActive()
