@@ -14,6 +14,18 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- ⚑ NOT VERIFIED, marked 2026-09-06 (CPP, G1 limb 4).
+       `<depend>nav2_costmap_2d</depend>` below carries NO version bound, which
+       reads as a claim of compatibility with every nav2_costmap_2d. It is not one.
+       Measured 2026-09-06: this package does NOT compile against released nav2
+       1.5.0 or 1.5.1 — src/zone_parameter_filter.cpp:119 needs
+       nav2_costmap_2d::ZONE_PARAMETER_FILTER, which exists only on branches
+       `main` and `lyrical`, in no release tag.
+       ⚑ AND THE MANIFEST CANNOT EXPRESS THE REAL CONSTRAINT: version_gte/version_lt
+       key on the version string, and tag 1.5.1 (a6354f3f) and lyrical HEAD
+       (6f23b11c) BOTH declare 1.5.1 while only the second one works. So the bound
+       is stated here in words rather than asserted in a field that would be wrong.
+       Verified against: upstream lyrical HEAD 6f23b11c only. -->
   <depend>rclcpp</depend>
   <depend>rclcpp_lifecycle</depend>
   <depend>pluginlib</depend>

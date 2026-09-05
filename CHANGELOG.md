@@ -40,6 +40,12 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
   single unanswered set in any case; a deadline replaces it.
 
 ### Known limitations
-See **Read this before you deploy it** in `README.md`. In particular, this filter
-cannot signal to the navigation stack that its output is untrustworthy, and it has
-not been run on hardware.
+See **Read this before you deploy it** in `README.md`. In particular:
+
+- ⚑ **This does not build against a released nav2.** `src/zone_parameter_filter.cpp:119`
+  needs `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, which is absent from tags `1.5.0` and
+  `1.5.1` and present only on branches `main` and `lyrical`. Measured 2026-09-06 against
+  tag `1.5.1` (`a6354f3f`) from a clean workspace: compile error. Verified to build and
+  test green against upstream `lyrical` HEAD `6f23b11c` only.
+- This filter cannot signal to the navigation stack that its output is untrustworthy.
+- It has not been run on hardware.
