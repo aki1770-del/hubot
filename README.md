@@ -71,15 +71,33 @@ it could not do, in terms a human can decide on.
 
 ## ⚑ Honest bounds — read these before you rely on it
 
-- **This package has not been built or tested yet.** Feature 2 included: the
-  `zone_decision` publisher has never been compiled, let alone observed on a topic.
-- **Original bound, unchanged:** No `colcon build` has run
-  against it, and the unit test in `test/` deliberately does **not** claim to prove
-  the abort is gone: the case that matters is an integration case with a live
-  executor and a rejecting target node, and it is **owed, not written**. A suite that
-  cannot fail on the real defect has measured nothing.
-- **The upstream defect above is a static call-chain read**, not an observed crash.
-  It has not been reproduced on a running robot.
+- ⚑ **SUPERSEDED 2026-09-05. The two bounds here said "not built" and "the
+  integration test is owed". Both are now false; the old text is corrected rather
+  than deleted, because a reader should see what changed.**
+  - **It builds.** `colcon build` green against ROS `lyrical` with `nav2_costmap_2d`
+    1.5.1; the plugin library `dlopen`s with 0 undefined symbols. Getting there took
+    a 3-file fix: the committed tree did not **configure** (`ament_target_dependencies`
+    is gone in this ament era), and behind that sat 276 compile errors — 272 cascading
+    from one unqualified base class — plus a real version split: the source was
+    `lyrical`, the header was PR-#6372 head.
+  - **The integration case named as owed is written.**
+    `test/degrade_at_production_caller_test.cpp` runs **upstream's own harness,
+    verbatim** (two substitutions: the include and the class) and drives
+    `CostmapFilter::updateCosts()` — the caller production uses, which upstream's own
+    770-line suite never calls once. Upstream's failing input throws there; here it
+    logs at ERROR, latches, and the process lives.
+  - **The upstream defect is no longer a static read — it is reproduced.** On vanilla
+    released `lyrical`, driven through `updateCosts()`, the process **dies** carrying
+    `ZoneParameterFilter: set_parameters failed`, with a negative control that fails.
+- **Still true, and load-bearing:** that reproduction is a gtest process, **not a
+  robot and not a running `controller_server`**. Nothing here has run on real hardware.
+- ⚑ **Two defects in this package's OWN honesty, found and fixed 2026-09-05:**
+  `resetFilter()` did not clear `enforcementDegraded()` although the header stated a
+  reload clears it — so the owed test would have **failed against the shipped
+  contract**; and the latch was cleared on leaving the mask **before the restore was
+  confirmed**, publishing `enforced: yes` on a restore nothing had confirmed. Both are
+  the success-shaped value this package exists to abolish, inside the package that
+  exists to abolish it.
 - The upstream filter carries other findings raised by nav2's maintainer that are
   **not** addressed here — a `reset()`/`deactivate()` conflation, an event-topic
   ordering gap, a parameter-client discovery race, and a re-apply arming window.
