@@ -1,0 +1,9 @@
+<library path="hubot_costmap_filters">
+  <class type="hubot::ZoneParameterFilter" base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Applies configured ROS parameter overrides to target nodes based on the mask
+      value at the robot's pose. Out-of-tree sibling of the upstream nav2 filter,
+      with the fatal-throw path replaced by a latched, loudly-logged degrade.
+    </description>
+  </class>
+</library>

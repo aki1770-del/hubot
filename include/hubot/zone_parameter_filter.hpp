@@ -1,0 +1,186 @@
+// Copyright (c) 2026 Komada (aki1770-del)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef HUBOT__ZONE_PARAMETER_FILTER_HPP_
+#define HUBOT__ZONE_PARAMETER_FILTER_HPP_
+
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "geometry_msgs/msg/pose.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/u_int8.hpp"
+
+#include "nav2_costmap_2d/costmap_filters/costmap_filter.hpp"
+#include "nav2_msgs/msg/costmap_filter_info.hpp"
+
+namespace hubot
+{
+
+/**
+ * @class ZoneParameterFilter
+ * @brief Costmap filter that applies a configured set of ROS parameters
+ *        based on the mask value at the robot's pose.
+ *
+ * The filter mask uses occupancy-grid values. State 0 is the reset state;
+ * each non-zero state ID maps via configuration to a list of parameter
+ * overrides on configured target nodes.
+ */
+class ZoneParameterFilter : public CostmapFilter
+{
+public:
+  ZoneParameterFilter();
+
+  /**
+   * @brief Initialise filter, subscribe to filter info / mask, build
+   *        per-target-node async parameter clients.
+   */
+  void initializeFilter(const std::string & filter_info_topic) override;
+
+  /**
+   * @brief Sample the mask at the robot pose; if the state changed,
+   *        apply the new state's parameter set via async client and,
+   *        if configured, publish the state event.
+   */
+  void process(
+    nav2_costmap_2d::Costmap2D & master_grid,
+    int min_i, int min_j, int max_i, int max_j,
+    const geometry_msgs::msg::Pose & pose) override;
+
+  /**
+   * @brief Reset filter — drop subscriptions, reset publisher, drop the
+   *        loaded configuration.
+   */
+  void resetFilter() override;
+
+  /**
+   * @brief Whether the filter has received its mask and is operational.
+   */
+  bool isActive();
+
+  /// ⚑ HUBOT: true once a parameter set has failed, i.e. the zone is known NOT to
+  /// be enforced on at least one target. Public on purpose — upstream expressed
+  /// this condition by aborting the process, which told an integrator nothing they
+  /// could act on. An integrator can read this and decide.
+  bool enforcementDegraded() const {return enforcement_degraded_;}
+
+protected:
+  /**
+   * @brief Subscriber callback for the filter info topic.
+   */
+  void filterInfoCallback(
+    const nav2_msgs::msg::CostmapFilterInfo::ConstSharedPtr & msg);
+
+  /**
+   * @brief Subscriber callback for the filter mask topic.
+   */
+  void maskCallback(
+    const nav_msgs::msg::OccupancyGrid::ConstSharedPtr & msg);
+
+  /**
+   * @brief Parse the per-state parameter map and nominal_defaults from
+   *        YAML overrides.
+   */
+  void loadStateConfig();
+
+  /**
+   * @brief Apply a state transition
+   * @param new_state Mask value of the state being entered
+   */
+  void enterState(uint8_t new_state);
+
+  /**
+   * @brief Apply the parameter set associated with the given state.
+   *        State 0 restores nominal_defaults; throws on unknown state.
+   */
+  void applyState(uint8_t new_state);
+
+  /**
+   * @brief Restore all overridden parameters to their nominal_defaults
+   *        values via async set_parameters.
+   */
+  void resetToNominal();
+
+  /**
+   * @brief Issue an async set_parameters call to the named target node.
+   */
+  void issueAsyncSetParameters(
+    const std::string & target_node,
+    const std::vector<rclcpp::Parameter> & params);
+
+  /**
+   * @brief Re-apply the current state once sets issued before a reload have
+   *        drained. Called only from exits of process() where no transition
+   *        fired, so it can never race a transition made on the same cycle.
+   */
+  void reapplyAfterDrainIfDue();
+
+  /**
+   * @brief Process completed set_parameters results non-blockingly. Called
+   *        at the start of every process(); a failed set on any target
+   *        throws (a failed set on a safety parameter is a stop condition).
+   */
+  void checkPendingParameterUpdates();
+
+  nav2::Subscription<nav2_msgs::msg::CostmapFilterInfo>::SharedPtr filter_info_sub_;
+  nav2::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr mask_sub_;
+  nav2::Publisher<std_msgs::msg::UInt8>::SharedPtr state_event_pub_;
+
+  nav_msgs::msg::OccupancyGrid::ConstSharedPtr filter_mask_;
+  std::string global_frame_;
+
+  uint8_t current_state_{0};
+  bool state_initialized_{false};
+
+  /// ⚑ HUBOT: latched true when a parameter set failed, so the zone is known NOT
+  /// to be enforced on at least one target. Never resets silently; a reload
+  /// clears it because the configuration it referred to is gone.
+  bool enforcement_degraded_{false};
+
+  // One per-state-override or per-nominal-default entry.
+  struct StateParamEntry
+  {
+    std::string target_node;
+    rclcpp::Parameter param;
+  };
+  std::map<uint8_t, std::vector<StateParamEntry>> state_param_map_;
+  // Keyed by target_node; values are bare-named Parameters to restore.
+  std::map<std::string, std::vector<rclcpp::Parameter>> nominal_defaults_;
+  std::map<std::string, rclcpp::AsyncParametersClient::SharedPtr> param_clients_;
+
+  // Client is held with its future: destroying it early breaks the future.
+  struct PendingSet
+  {
+    rclcpp::AsyncParametersClient::SharedPtr client;
+    std::shared_future<std::vector<rcl_interfaces::msg::SetParametersResult>> future;
+  };
+  std::vector<PendingSet> pending_sets_;
+
+  // Re-apply the current state once sets left in flight by a reload have drained.
+  bool reapply_after_drain_{false};
+
+  // Bounds in-flight sets against a target that never answers.
+  static constexpr size_t kMaxPendingSets = 64;
+
+  std::string state_event_topic_;
+
+  bool filter_info_received_{false};
+};
+
+}  // namespace hubot
+
+#endif  // HUBOT__ZONE_PARAMETER_FILTER_HPP_
