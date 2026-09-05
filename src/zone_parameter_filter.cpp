@@ -67,6 +67,11 @@ void ZoneParameterFilter::initializeFilter(
     node->create_publisher<std_msgs::msg::UInt8>(joinWithParentNamespace(state_event_topic_));
   state_event_pub_->on_activate();
 
+  // ⚑ HUBOT — the human-decision surface, created beside the robot's one.
+  decision_pub_ = node->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+    joinWithParentNamespace(decision_topic_), rclcpp::QoS(10));
+  decision_pub_->on_activate();
+
   loadStateConfig();
 }
 
@@ -355,6 +360,9 @@ void ZoneParameterFilter::process(
     event_msg->data = new_state;
     state_event_pub_->publish(std::move(event_msg));
   }
+  // ⚑ HUBOT: the robot gets the byte; the person gets the basis, in the
+  // same breath. A transition is exactly when a human decision is due.
+  publishDecision("zone transition");
 
   current_state_ = new_state;
   state_initialized_ = true;
@@ -512,6 +520,7 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
             logger_,
             "ZoneParameterFilter: set_parameters FAILED and the zone is NOT being "
             "enforced on that target: %s", r.reason.c_str());
+          publishDecision("parameter set rejected: " + r.reason);
         }
       }
     } catch (const std::exception & ex) {
@@ -521,8 +530,71 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
         logger_,
         "ZoneParameterFilter: parameter set threw and the zone is NOT being "
         "enforced: %s", ex.what());
+      publishDecision(std::string("parameter set threw: ") + ex.what());
     }
   }
+}
+
+// ⚑ HUBOT — THE HUMAN-DECISION SURFACE.
+//
+// Komada-voice 2026-09-05: "zone parameter is for robot. not for human. but we
+// need it for human decision. build it."
+//
+// Upstream publishes a bare state byte. A byte is a robot's input: it selects a
+// parameter set and nothing about it is a reason. A person deciding whether to
+// rely on the zone needs the BASIS — which zone, what it changed, on which
+// targets, and whether it actually took effect. The last of those is the one a
+// number can never carry, and it is the one that matters: upstream expressed
+// "I could not enforce this zone" by killing the process.
+//
+// diagnostic_msgs/DiagnosticArray is chosen because it is the ROS-native way to
+// say something to a person, it needs no new interface package, and every
+// operator tool already renders it. The robot's UInt8 topic is untouched: this
+// ADDS a surface, it does not replace one.
+void ZoneParameterFilter::publishDecision(const std::string & detail)
+{
+  if (!decision_pub_) {
+    return;
+  }
+  diagnostic_msgs::msg::DiagnosticStatus st;
+  st.name = "zone_parameter_filter";
+  st.hardware_id = global_frame_;
+
+  if (enforcement_degraded_) {
+    st.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+    st.message =
+      "Zone " + std::to_string(static_cast<int>(current_state_)) +
+      " is NOT being enforced on at least one target. Decide as if the zone's "
+      "limits are not applied.";
+  } else if (current_state_ == 0) {
+    st.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+    st.message = "Outside any zone; nominal defaults are in force.";
+  } else {
+    st.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+    st.message =
+      "Zone " + std::to_string(static_cast<int>(current_state_)) +
+      " is in force.";
+  }
+
+  const auto add = [&st](const std::string & k, const std::string & v) {
+      diagnostic_msgs::msg::KeyValue kv;
+      kv.key = k;
+      kv.value = v;
+      st.values.push_back(kv);
+    };
+  add("zone_state", std::to_string(static_cast<int>(current_state_)));
+  add("enforced", enforcement_degraded_ ? "NO" : "yes");
+  add("configured", state_initialized_ ? "yes" : "not yet");
+  add("pending_parameter_sets", std::to_string(pending_sets_.size()));
+  add("targets", std::to_string(param_clients_.size()));
+  if (!detail.empty()) {
+    add("event", detail);
+  }
+
+  diagnostic_msgs::msg::DiagnosticArray arr;
+  arr.header.stamp = clock_->now();
+  arr.status.push_back(st);
+  decision_pub_->publish(arr);
 }
 
 void ZoneParameterFilter::resetFilter()
@@ -534,6 +606,10 @@ void ZoneParameterFilter::resetFilter()
   if (state_event_pub_) {
     state_event_pub_->on_deactivate();
     state_event_pub_.reset();
+  }
+  if (decision_pub_) {
+    decision_pub_->on_deactivate();
+    decision_pub_.reset();
   }
 
   filter_mask_.reset();

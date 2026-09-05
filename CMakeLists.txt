@@ -16,12 +16,13 @@ find_package(nav2_costmap_2d REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 
 set(dependencies
   rclcpp rclcpp_lifecycle pluginlib nav2_costmap_2d nav2_msgs
-  nav_msgs std_msgs geometry_msgs rcl_interfaces)
+  nav_msgs std_msgs diagnostic_msgs geometry_msgs rcl_interfaces)
 
 add_library(hubot_costmap_filters SHARED src/zone_parameter_filter.cpp)
 target_include_directories(hubot_costmap_filters PUBLIC

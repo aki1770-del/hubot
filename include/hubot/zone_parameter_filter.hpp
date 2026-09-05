@@ -24,6 +24,7 @@
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/u_int8.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
 
 #include "nav2_costmap_2d/costmap_filters/costmap_filter.hpp"
 #include "nav2_msgs/msg/costmap_filter_info.hpp"
@@ -150,6 +151,20 @@ protected:
   /// to be enforced on at least one target. Never resets silently; a reload
   /// clears it because the configuration it referred to is gone.
   bool enforcement_degraded_{false};
+
+  /// ⚑ HUBOT — THE HUMAN-DECISION SURFACE.
+  /// The upstream filter publishes a bare `std_msgs/UInt8`: a state number. A
+  /// number is what a ROBOT needs — it selects a parameter set. A HUMAN deciding
+  /// whether to trust the zone needs the BASIS: which zone, what it changed, on
+  /// which targets, and above all WHETHER IT ACTUALLY TOOK EFFECT.
+  /// `diagnostic_msgs/DiagnosticArray` is the ROS-native surface for exactly that
+  /// — no new interface package, and every existing operator tool renders it.
+  rclcpp_lifecycle::LifecyclePublisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
+    decision_pub_;
+  std::string decision_topic_{"zone_decision"};
+
+  /// Emit the current zone situation in terms a person can act on.
+  void publishDecision(const std::string & detail);
 
   // One per-state-override or per-nominal-default entry.
   struct StateParamEntry

@@ -42,9 +42,38 @@ Here, every failure is logged at `ERROR` with its reason, the filter latches
 fatal. An integrator can read the flag and decide what their vehicle should do —
 which is a decision they could not make when the process was already gone.
 
+## Feature 2 — the human-decision surface
+
+The upstream filter publishes a bare `std_msgs/UInt8` on a topic: a state number.
+**A number is a robot's input.** It selects a parameter set, and nothing about it is
+a reason. A person deciding whether to rely on the zone needs the basis — which
+zone, what changed, on which targets, and above all **whether it actually took
+effect.**
+
+Hubot adds `zone_decision`, a `diagnostic_msgs/DiagnosticArray`:
+
+| field | carries |
+|---|---|
+| `level` | `OK` in force · `ERROR` **when the zone is NOT being enforced** |
+| `message` | a sentence a person can act on — *"Zone 2 is NOT being enforced on at least one target. Decide as if the zone's limits are not applied."* |
+| `values` | `zone_state`, `enforced`, `configured`, `pending_parameter_sets`, `targets`, and the triggering `event` |
+
+It is emitted on every zone transition and on every enforcement failure. The
+robot's `UInt8` topic is **untouched** — this adds a surface, it does not replace
+one. `diagnostic_msgs` was chosen because it is the ROS-native way to address a
+person, it needs no new interface package, and existing operator tools already
+render it.
+
+**Why this is the point of the package.** Upstream expressed *"I could not enforce
+this zone"* by killing the process, which tells a person nothing they can act on.
+Feature 1 stops the killing. Feature 2 is what replaces it: the machine says what
+it could not do, in terms a human can decide on.
+
 ## ⚑ Honest bounds — read these before you rely on it
 
-- **This package has not been built or tested yet.** No `colcon build` has run
+- **This package has not been built or tested yet.** Feature 2 included: the
+  `zone_decision` publisher has never been compiled, let alone observed on a topic.
+- **Original bound, unchanged:** No `colcon build` has run
   against it, and the unit test in `test/` deliberately does **not** claim to prove
   the abort is gone: the case that matters is an integration case with a live
   executor and a rejecting target node, and it is **owed, not written**. A suite that
