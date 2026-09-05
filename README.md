@@ -129,8 +129,11 @@ because it is read-only"`), so the harness can see the failure it rules out.
 
 ⚑ **CORRECTED 2026-09-06 — this bound previously read *"builds green against ROS `lyrical`
 with `nav2_costmap_2d` 1.5.1"*. The tree it was green against declared `<version>1.5.0</version>`
-and carried four local nav2 modifications nothing warned about; and against *released* 1.5.1 it
-does not build at all (see the first bound above). A build inside a tree that may hold your own
+and carried local nav2 modifications nothing warned about: measured 2026-09-06 against upstream
+`lyrical` HEAD, **six modified files** — `layered_costmap.hpp`/`.cpp` and
+`footprint_subscriber.hpp`/`.cpp` (26 lines), `keepout_filter.cpp` (7) and
+`nav2_util/src/path_utils.cpp` (30) — **two of them the production caller's own class**, in a
+directory that is not a git repository. And against *released* 1.5.1 it does not build at all (see the first bound above). A build inside a tree that may hold your own
 edits says nothing about a stranger's build.**
 
 That is a gtest process, not a vehicle. Nothing here has run on real hardware, and nothing here
