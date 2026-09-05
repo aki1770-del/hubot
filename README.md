@@ -198,17 +198,28 @@ enforcement failure. Your existing operator tools already render it.
 
 | field | carries |
 |---|---|
-| `level` | `OK` in force · `WARN` requested but not yet confirmed · `ERROR` when the zone is **not** being enforced |
+| `level` | `OK` in force · `WARN` requested but not yet confirmed · `ERROR` when the zone is **not** being enforced · `STALE` when the filter is **not watching** |
 | `message` | a sentence to act on — *"Zone 2 is NOT being enforced on at least one target. Decide as if the zone's limits are not applied."* |
-| `values` | `zone_state`, `mask_state`, `enforced`, `configured`, `unconfirmed_targets`, `degraded_targets`, `pending_parameter_sets`, `targets`, and the triggering `event` |
+| `values` | `zone_state`, `mask_state`, `enforced`, `configured`, `unconfirmed_targets`, `degraded_targets`, `pending_parameter_sets`, `targets`, the triggering `event`, and the liveness fields `watching`, `costmap_age_s`, `report_seq`, `report_period_s`, `valid_for_s` |
 
-**`enforced` has three values, and ⚑ the middle one is the reason this package exists.**
+**It is published on every zone transition, on every enforcement change, and — ⚑ since
+2026-09-06 — every `liveness_period` seconds whether or not anything changed.** That last
+one is the subject of *"Silence means I am not watching"* below, and it is the reason a
+quiet `zone_decision` is no longer the same thing as a healthy one.
+
+**`enforced` has four values, and ⚑ the second one is the reason this package exists.**
 
 | value | means |
 |---|---|
-| `yes` | every target of the current state has **confirmed** |
+| `yes` | every target of the current state has **confirmed** — ⚑ and the filter is still watching |
 | `pending` | ⚑ **the sets are issued and unanswered.** Nothing has gone wrong yet — and nothing is holding the robot back either. **Treat as no.** |
+| `unknown` | ⚑ **the costmap has stopped calling the filter.** Nothing has failed; nothing is being checked either. See `watching` below |
 | `NO` | a target rejected, threw, or fell silent past `set_parameters_timeout` — or the mask named a state with no configuration |
+
+⚑ **`unknown` was added 2026-09-06 and it is a breaking change to this vocabulary.** It is
+made now, deliberately, because this package has no remotes and no consumer can be holding
+the old set — the cheapest moment it will ever be. **The rule that goes with it is a
+whitelist, and the old blacklist below has been corrected for the same reason.**
 
 ⚑ **`pending` is the window this whole package is built for.** It is the moment the
 robot is entering a zone, the limit has been asked for, and **nobody yet knows whether
@@ -279,13 +290,21 @@ base class and is erased by *statement order* in the derived one, not by an arch
 The retracted sentence was restated here in the same commit that corrected the header.
 **What you must do is unchanged either way**, so the instruction below still stands.
 
-**So: subscribe to `zone_decision` and refuse to drive on `enforced: NO` or
-`pending`.** If you do not, hubot has told you and nothing has listened.
+**So: subscribe to `zone_decision` and ⚑ PROCEED ONLY ON `enforced: yes`.** If you do not,
+hubot has told you and nothing has listened.
+
+⚑ **CORRECTED 2026-09-06, and the correction is about shape, not wording.** This read
+*"refuse to drive on `enforced: NO` or `pending`"* — **a blacklist**, which cannot be
+complete, and which **fails open**: a consumer coded literally against those two strings
+would have read the new `unknown` as permission to drive. A rule that admits every value
+it has not heard of is the wrong rule on a surface like this one regardless of how many
+values exist today. It is a whitelist now.
 
 **It has never run on a robot.** Verified 2026-09-06 from a clean workspace against
 **upstream `lyrical` branch HEAD `6f23b11c`, with no local nav2 patches on the path**:
 `colcon build` green, `ldd -r` reports zero undefined symbols, `pluginlib` resolves
-`hubot::ZoneParameterFilter` out of the ament index, and 21 of 21 tests pass — including a
+`hubot::ZoneParameterFilter` out of the ament index, and **28 of 28 tests pass** (21 before
+2026-09-06; `colcon test-result --all`) — including a
 live `LayeredCostmap::updateMap()` and a **negative control that requires upstream's own
 filter, loaded from that same build, to throw out of `updateMap()` on the same input**. It
 does (`"ZoneParameterFilter: set_parameters failed: parameter 'readonly_speed' cannot be set
@@ -307,13 +326,76 @@ has run inside a real `controller_server`.
 Anything else may set the same parameter afterwards and this filter will not notice.
 Unverified by construction.
 
-**It only learns what your targets said when the costmap ticks.** The result check
-runs from `process()` and nowhere else, because a costmap filter owns no timer. If
-costmap updates stop, `pending` never resolves, the deadline never fires, and the
-last published value simply stands. The `DiagnosticArray` carries a header stamp —
-check it.
+⚑ **THIS BOUND SAID THE FOLLOWING UNTIL 2026-09-06, AND IT IS KEPT BECAUSE IT IS WHY THE
+SECTION BELOW EXISTS:** *"It only learns what your targets said when the costmap ticks. The
+result check runs from `process()` and nowhere else, because a costmap filter owns no timer.
+If costmap updates stop, `pending` never resolves, the deadline never fires, and the last
+published value simply stands. The `DiagnosticArray` carries a header stamp — check it."*
+
+**Every clause of that was true of the code, and the countermeasure was the last two words,
+addressed to you.** See *"Silence means I am not watching"*. What is left of it is stated
+there, honestly and in full: **if the whole node dies, the last message still stands.**
 
 **It is QM-class software. Nothing here is safety-certified.**
+
+## ⚑ Silence means "I am not watching", not "you are safe"
+
+A costmap filter is only called when the costmap ticks. So if the costmap stopped, this
+filter stopped — and a topic that only speaks when something changes says exactly nothing
+in that case. **An `OK` from ninety seconds ago renders identically to an `OK` from now.**
+You would read *the zone is enforced*. The truth would be *nobody is checking*.
+
+**That is the failure this package was written to abolish, and it was inside the package.**
+
+**What it does now.** A liveness timer on the node — **not** on the costmap update loop:
+
+1. **It publishes every `liveness_period` (default 1.0 s) whether or not anything changed.**
+   Presence of the message is the claim *"I am watching."* Absence of it is the claim
+   *"I am not."* Publishing only on change is what made a healthy quiet filter and a dead
+   one produce the same observable, and you cannot act on an observable that is identical in
+   the good case and the bad one.
+2. **After `costmap_silence_timeout` (default 2.0 s) without a call, it says so** —
+   `watching: NO`, level **`STALE`**, and `enforced` becomes **`unknown`**. `STALE` rather
+   than `ERROR` on purpose: nothing was measured and found bad; nothing was measured.
+3. ⚑ **It also does the work.** The `set_parameters` deadline check needs the clock and the
+   futures and nothing from the costmap, so the timer runs it. **`pending` now resolves and
+   the deadline now fires with the costmap stopped** — which is the larger half of the old
+   bound above going false.
+4. **It covers a second door the old bound never named.** `CostmapFilter::updateCosts()`
+   returns early when `enabled_` is false and never calls the filter
+   (`costmap_filter.cpp:128-130`), and `enabled_` is flipped by the base class's own
+   `<name>/toggle_filter` service (`:82-86`). **A disabled filter used to look exactly like
+   an enforced zone.** Now it reports `watching: NO`.
+
+**Why a timer is possible at all**, since "a costmap filter owns no timer" was our own
+sentence: `Layer::node_` is a live handle in the protected region (`layer.hpp:186`), and
+**the node is spun on a different thread from the costmap update loop** — `Costmap2DROS`
+always creates `map_update_thread_` in `activate()` (`costmap_2d_ros.cpp:314`), while its
+node is spun separately by whoever owns it (`controller_server.cpp:72`,
+`planner_server.cpp:78`, and `rclcpp::spin` in `costmap_2d_node.cpp:47`). **All three
+non-test construction sites in nav2 have that property, and it is structural in
+`Costmap2DROS` rather than a habit of any one server.** So the two threads fail
+independently, and the timer keeps running through exactly the failure that stops the
+filter.
+
+| parameter | default | set `<= 0` to |
+|---|---|---|
+| `liveness_period` | `1.0` s | disable the heartbeat entirely (warned at startup) |
+| `costmap_silence_timeout` | `2.0` s | keep the heartbeat but never report a stopped costmap |
+
+⚑ **THE PART THIS DOES NOT CLOSE, AND CANNOT.** **If the node itself dies, the timer dies
+with it**, no message arrives, and the last one stands — exactly as before. **Nothing
+running inside a process can announce that process's own death.** What you get instead of a
+bare stamp is a **promise with a number in it**: every message carries `report_period_s` and
+`valid_for_s`, so three lines of consumer code can decide the report has expired, and
+`report_seq` advances on every publish so a frozen `/clock` cannot fake liveness. **That is
+strictly better than "check it". It is still something you must check.**
+
+**The complete answer lives in your process, not ours, and we have not built it:** a
+`DEADLINE` QoS on your subscription, or a `diagnostic_aggregator` staleness rule, raises the
+alarm in *your* node when ours goes quiet. ⚑ **NOT IMPLEMENTED HERE AND NOT MEASURED.**
+Naming it is not the same as having built it, and it is written here as a gap rather than
+offered as a feature.
 
 ## Lineage and licence
 

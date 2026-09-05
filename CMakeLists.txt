@@ -101,6 +101,16 @@ if(BUILD_TESTING)
   add_executable(zpf_survival_probe test/zpf_survival_probe.cpp)
   target_link_libraries(zpf_survival_probe ${hubot_test_deps})
 
+  # ⚑ THE STOPPED-vs-QUIET ORACLE. Drives the filter from the test thread while
+  # the executor spins the node on ANOTHER thread -- production's topology
+  # (controller_server.cpp:72) -- so that stopping the costmap update loop does
+  # not stop the executor. Two arms differing in exactly one thing, plus TWO
+  # negative controls that require the ORIGINAL DEFECT to reappear when the
+  # mechanism is switched off.
+  ament_add_gtest(costmap_silence_liveness_test
+    test/costmap_silence_liveness_test.cpp TIMEOUT 300)
+  target_link_libraries(costmap_silence_liveness_test ${hubot_test_deps})
+
   ament_add_gtest(survival_harness_test test/survival_harness_test.cpp TIMEOUT 300)
   target_link_libraries(survival_harness_test ${hubot_test_deps})
   target_compile_definitions(survival_harness_test PRIVATE

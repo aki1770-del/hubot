@@ -29,6 +29,21 @@
 namespace hubot
 {
 
+namespace
+{
+/// ⚑ STEADY, not ROS time, and not wall time either. The question the liveness
+/// signal answers is "is the costmap update thread still turning", which is a
+/// property of a thread in the real world. steady_clock cannot jump backwards
+/// (which would make an age negative and the detector misfire) and cannot be
+/// frozen by a stalled `/clock` (which would report 0.000 s of age for a stack
+/// that has been dead for a minute -- absence riding the measurement scale).
+int64_t steadyNowNs()
+{
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+    std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}  // namespace
+
 ZoneParameterFilter::ZoneParameterFilter()
 : filter_info_sub_(nullptr),
   mask_sub_(nullptr),
@@ -70,6 +85,33 @@ void ZoneParameterFilter::initializeFilter(
       "as enforced on it indefinitely.",
       set_parameters_timeout_);
   }
+  // ⚑ THE LIVENESS SIGNAL. Same convention as set_parameters_timeout directly
+  // above: configurable, and <= 0 disables it with a warning that names exactly
+  // what is being given up. Disabling a detector should be a choice somebody
+  // makes on purpose and can be found doing.
+  liveness_period_ =
+    node->declare_or_get_parameter<double>(
+    name_ + "." + "liveness_period", 1.0);
+  costmap_silence_timeout_ =
+    node->declare_or_get_parameter<double>(
+    name_ + "." + "costmap_silence_timeout", 2.0);
+  if (liveness_period_ <= 0.0) {
+    RCLCPP_WARN(
+      logger_,
+      "ZoneParameterFilter: liveness_period is %.3f (<= 0), so this filter will "
+      "publish only when something changes. A reader then cannot tell a healthy "
+      "quiet filter from a stopped one, `pending` will not resolve and the "
+      "set_parameters deadline will not fire while the costmap is not ticking.",
+      liveness_period_);
+  } else if (costmap_silence_timeout_ <= 0.0) {
+    RCLCPP_WARN(
+      logger_,
+      "ZoneParameterFilter: costmap_silence_timeout is %.3f (<= 0), so the "
+      "heartbeat will keep publishing but will never report that the costmap "
+      "has stopped; `watching` will always read yes.",
+      costmap_silence_timeout_);
+  }
+
   filter_info_topic_ = joinWithParentNamespace(filter_info_topic);
   RCLCPP_INFO(
     logger_,
@@ -91,6 +133,28 @@ void ZoneParameterFilter::initializeFilter(
   decision_pub_->on_activate();
 
   loadStateConfig();
+
+  // ⚑ Created LAST, after loadStateConfig(), and deliberately so: the node is
+  // spun on another thread, so a tick can land the instant this returns. It
+  // would block on the mutex this function holds and then see a fully loaded
+  // filter -- but only because the creation is here rather than at the top.
+  //
+  // Seeded to "now" rather than to zero so the first report measures the age
+  // from initialisation, which is a real number, instead of from the epoch.
+  last_process_steady_ns_.store(steadyNowNs());
+  ever_processed_.store(false);
+  costmap_silent_.store(false);
+  if (liveness_period_ > 0.0) {
+    liveness_timer_ = node->create_wall_timer(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::duration<double>(liveness_period_)),
+      std::bind(&ZoneParameterFilter::livenessTick, this));
+    RCLCPP_INFO(
+      logger_,
+      "ZoneParameterFilter: liveness heartbeat every %.3fs on \"%s\"; the costmap "
+      "is reported as stopped after %.3fs without a process() call.",
+      liveness_period_, decision_topic_.c_str(), costmap_silence_timeout_);
+  }
 }
 
 void ZoneParameterFilter::filterInfoCallback(
@@ -344,7 +408,27 @@ void ZoneParameterFilter::process(
 {
   std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
 
+  // ⚑ THE HEARTBEAT'S EVIDENCE. Recorded FIRST, before any early return below:
+  // every one of those returns is still a costmap tick, and a filter that is
+  // being driven but has no mask must report "watching, and not configured",
+  // never "not watching". Conflating "I have nothing to say" with "nobody is
+  // asking me" is the whole defect in miniature.
+  last_process_steady_ns_.store(steadyNowNs());
+  ever_processed_.store(true);
+
   checkPendingParameterUpdates();
+
+  // ⚑ RETRACTION. `costmap_silent_` is the one verdict on this surface that is
+  // NOT latched, and it must not be: a signal that can only go one way stops
+  // being read. exchange() so the announcement happens exactly once per
+  // episode, on the edge -- the heartbeat carries the steady state.
+  if (costmap_silent_.exchange(false)) {
+    RCLCPP_INFO(
+      logger_,
+      "ZoneParameterFilter: costmap updates have resumed; this filter is "
+      "watching again.");
+    publishDecision("costmap updates resumed");
+  }
 
   if (!filter_mask_) {
     RCLCPP_WARN_THROTTLE(
@@ -767,10 +851,74 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
 // ADDS a surface, it does not replace one.
 std::string ZoneParameterFilter::enforcementToken() const
 {
+  // ⚑ ORDER IS THE ARGUMENT, so it is written down. A MEASURED bad outcome
+  // outranks not having measured: `enforcement_degraded_` and
+  // `mask_state_undeclared_` are things this filter positively observed and
+  // that nothing has retracted, and they stay true across a silence. Only when
+  // there is no known fault does "I am not watching" become the most that can
+  // honestly be said.
   if (enforcement_degraded_ || mask_state_undeclared_) {
     return "NO";
   }
+  // ⚑ THE FOURTH VALUE, added 2026-09-06. It is NOT a weaker `yes` and it is
+  // NOT a `NO`: nothing has failed, and nothing is being checked. Reporting
+  // `yes` here was the defect -- the reassuring value survived precisely
+  // because the thing that would have refuted it had stopped running. The
+  // reassuring value is now GATED ON THE LIVENESS OF ITS OWN REFUTER, which is
+  // the whole countermeasure in one line.
+  if (costmap_silent_) {
+    return "unknown";
+  }
   return unconfirmed_targets_.empty() ? "yes" : "pending";
+}
+
+double ZoneParameterFilter::secondsSinceLastProcess() const
+{
+  return static_cast<double>(steadyNowNs() - last_process_steady_ns_.load()) * 1e-9;
+}
+
+void ZoneParameterFilter::livenessTick()
+{
+  std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
+
+  // resetFilter() may have run between the executor picking this timer up and
+  // the mutex being released. It drops the publisher, and there is nothing to
+  // say without one.
+  if (!decision_pub_) {
+    return;
+  }
+
+  // (1) ⚑ THE WORK, not just the announcement. checkPendingParameterUpdates()
+  // reads the clock and the futures and touches NOTHING from the costmap -- it
+  // lived inside process() only because process() was the only thing that ran.
+  // Driving it from here is what makes the deadline fire and `pending` resolve
+  // with the costmap stopped, which is the larger half of AoU-5 going false.
+  checkPendingParameterUpdates();
+
+  // (2) The verdict.
+  const double age = secondsSinceLastProcess();
+  const bool silent =
+    (costmap_silence_timeout_ > 0.0) && (age > costmap_silence_timeout_);
+  const bool flipped = (costmap_silent_.exchange(silent) != silent);
+  if (flipped && silent) {
+    RCLCPP_ERROR(
+      logger_,
+      "ZoneParameterFilter: no costmap update for %.3fs (limit %.3fs). This "
+      "filter is NOT watching: it is not sampling the mask and its last report "
+      "is that old. Nothing below is a live reading.",
+      age, costmap_silence_timeout_);
+  }
+
+  // (3) ⚑ SPEAK EVERY TICK, changed or not. This is the countermeasure and it
+  // is the part that looks wasteful. It is not: publishing only on change makes
+  // a healthy quiet filter and a dead one produce the SAME OBSERVABLE -- an
+  // unchanging OK -- and an operator cannot act on an observable that is
+  // identical in the good case and the bad one. Presence of the message is the
+  // claim "I am watching"; absence of it is the claim "I am not". 1 Hz by
+  // default, which is the rate ROS diagnostics are conventionally published at.
+  publishDecision(
+    flipped ? (silent ? "costmap updates stopped" : "costmap updates resumed")
+    : std::string());
 }
 
 void ZoneParameterFilter::publishDecisionOnStatusChange()
@@ -813,6 +961,7 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
   // `pending` is not a weaker `yes`; an operator must read it as `NO` until it
   // resolves one way or the other.
   const bool unconfirmed = !unconfirmed_targets_.empty();
+  const double costmap_age = secondsSinceLastProcess();
   if (enforcement_degraded_) {
     st.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
     st.message =
@@ -827,6 +976,24 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
       "were applied for it; what is in force is still zone " +
       std::to_string(static_cast<int>(current_state_)) +
       "'s. Decide as if this zone has no limits.";
+  } else if (costmap_silent_) {
+    // ⚑ STALE, not ERROR, and the choice is deliberate. DiagnosticStatus has a
+    // value that means exactly "this reading is not live" -- STALE = 3 -- and
+    // every operator tool already renders it apart from a fault. Folding "I am
+    // not watching" onto ERROR would say a thing was measured and found bad
+    // when it was not measured at all, which is the same category error as
+    // publishing `enforced: yes` on an unconfirmed set. The two branches above
+    // keep precedence for the same reason in reverse: they ARE measurements,
+    // and they survive a silence.
+    st.level = diagnostic_msgs::msg::DiagnosticStatus::STALE;
+    st.message =
+      "NOT WATCHING. No costmap update for " +
+      std::to_string(costmap_age) + "s" +
+      (ever_processed_ ? "" : " -- this filter has not been driven even once") +
+      ". Zone " + std::to_string(static_cast<int>(current_state_)) +
+      "'s limits were last requested but nothing has checked them since, and "
+      "the mask is not being sampled. Decide as if nobody is watching, because "
+      "nobody is.";
   } else if (unconfirmed) {
     st.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
     st.message =
@@ -861,6 +1028,31 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
   add("degraded_targets", std::to_string(degraded_targets_.size()));
   add("pending_parameter_sets", std::to_string(pending_sets_.size()));
   add("targets", std::to_string(param_clients_.size()));
+
+  // ⚑ THE POSITIVE LIVENESS FIELDS. Everything above describes the ZONE; these
+  // four describe whether anything is still looking at it. A reader who trusts
+  // only the fields above is trusting a number that stopped moving.
+  //
+  // `watching`         -- the answer in one word, so it needs no arithmetic.
+  // `costmap_age_s`    -- the evidence behind that word, so it can be checked.
+  // `report_seq`       -- ⚑ the only field a stopped clock cannot fake. Two
+  //                       messages with the same header stamp but different
+  //                       seq means the clock froze and the filter did not.
+  // `report_period_s`  -- the promise: how often the next one is due.
+  // `valid_for_s`      -- ⚑ FOR THE CASE THIS PACKAGE CANNOT REACH. If the node
+  //                       dies, no further message arrives and the last one
+  //                       stands; a reader still has to notice. What they get
+  //                       now is an expiry THE PUBLISHER DECLARED, evaluable by
+  //                       three lines of consumer code, instead of a bare stamp
+  //                       and the instruction "check it". Better. Not closed.
+  add("watching", costmap_silent_ ? "NO" : "yes");
+  add("costmap_age_s", std::to_string(costmap_age));
+  add("report_seq", std::to_string(++report_seq_));
+  add("report_period_s", std::to_string(liveness_period_));
+  add(
+    "valid_for_s",
+    std::to_string(liveness_period_ > 0.0 ? liveness_period_ * 2.5 : 0.0));
+
   if (!detail.empty()) {
     add("event", detail);
   }
@@ -875,6 +1067,17 @@ void ZoneParameterFilter::resetFilter()
 {
   std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
 
+  // ⚑ The timer follows the subscriptions exactly: dropped here, rebuilt by
+  // initializeFilter(), because CostmapFilter::reset() is
+  // `resetFilter(); initializeFilter(...)` (costmap_filter.cpp:103-108) and a
+  // timer that survived would be a second one after every ClearEntireCostmap.
+  // cancel() before reset() so a tick already dispatched does no further work;
+  // the executor holds its own reference for the duration of the callback, so
+  // this neither waits nor destroys under it.
+  if (liveness_timer_) {
+    liveness_timer_->cancel();
+    liveness_timer_.reset();
+  }
   filter_info_sub_.reset();
   mask_sub_.reset();
   if (state_event_pub_) {
@@ -923,6 +1126,15 @@ void ZoneParameterFilter::resetFilter()
   // discarded configuration, and leaving them was its own defect -- their
   // results would have re-latched against a configuration that no longer
   // existed.
+  // ⚑ `costmap_silent_` DOES clear here, and the reasoning is the mirror image
+  // of the one above it for `enforcement_degraded_`. That flag is a claim about
+  // a TARGET NODE'S LIVE VALUE, which no reload reaches, so it survives. This
+  // one is a claim about WHETHER THIS FILTER IS BEING DRIVEN -- and the reload
+  // is itself proof that it is: reset() arrives on the costmap update thread.
+  // Keeping it would report "not watching" from inside the callback of the
+  // thing doing the watching.
+  costmap_silent_.store(false);
+  ever_processed_.store(false);
   pending_sets_.clear();
   unconfirmed_targets_.clear();
   last_published_token_.clear();  // a cache; a stale one would suppress a publish

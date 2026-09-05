@@ -394,12 +394,20 @@ protected:
   }
 
   // ⚑ Like waitForCond, but TICKS THE FILTER each round.
-  // checkPendingParameterUpdates() -- the only thing that drains a future,
-  // clears a fault, or resolves `pending` -- runs solely from the top of
-  // process(). Spinning executors alone therefore never observes a result:
-  // the future becomes ready and nobody looks. This filter learns what the
-  // targets said only when the costmap ticks, which is inherent to a costmap
-  // filter (it owns no timer) and is stated in AoU-5.
+  // checkPendingParameterUpdates() -- the thing that drains a future, clears a
+  // fault, or resolves `pending` -- runs from the top of process().
+  //
+  // ⚑ CORRECTED 2026-09-06. The rest of this comment used to read "and nowhere
+  // else ... which is inherent to a costmap filter (it owns no timer) and is
+  // stated in AoU-5." That is no longer true and the claim about costmap
+  // filters was never true: a liveness timer on the node now drives the same
+  // function independently of the costmap (see `liveness_timer_`), so the
+  // deadline fires and `pending` resolves with nothing ticking. These fixtures
+  // still pump deliberately -- they leave `liveness_period` at its 1.0 s
+  // default and assert on sub-second windows, so pumping is what makes them
+  // deterministic rather than dependent on a heartbeat landing in time.
+  // The liveness path has its own oracle in
+  // test/costmap_silence_liveness_test.cpp.
   template<typename Pred>
   bool pumpUntil(Pred pred, std::chrono::milliseconds timeout = 3000ms)
   {
