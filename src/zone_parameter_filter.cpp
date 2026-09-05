@@ -480,16 +480,30 @@ bool ZoneParameterFilter::applyState(uint8_t new_state)
     // test/zpf_survival_probe.cpp mode `unknown-state` observed exactly that,
     // out-of-process, before this change: "DIED by signal 6 (Aborted)".
     //
-    // ⚑ THE CONVENTION CLAIM, CORRECTED. An earlier draft of this comment said
-    // the three sibling filters "not one of them throws". That is false and a
-    // maintainer refutes it with one grep: speed_filter.cpp throws at :66 and
-    // :168, keepout_filter.cpp at :66, :101 and :146, binary_filter.cpp at :66
-    // and :109 -- seven sites. The TRUE claim is stronger and is the one that
-    // bears on this line: EVERY ONE of those seven is the same node-lock guard
+    // ⚑ THE CONVENTION CLAIM, CORRECTED TWICE. The first draft said the three
+    // sibling filters "not one of them throws". False, and refutable with one
+    // grep: speed_filter.cpp throws at :66 and :168, keepout_filter.cpp at :66,
+    // :101 and :146, binary_filter.cpp at :66 and :109 -- seven sites. The
+    // correction was that all seven are the same node-lock guard
     // (`throw std::runtime_error{"Failed to lock node"}`) in initializeFilter()
-    // or a subscription callback. NOT ONE of them throws from process(), and
-    // NOT ONE throws on a data-dependent condition. Three independent sites,
-    // one pattern: in this filter family, the data path does not throw.
+    // or a subscription callback: none from process(), none data-dependent.
+    //
+    // ⚑ THAT CORRECTION THEN CLOSED WITH "in this filter family, the data path
+    // does not throw", AND THAT WAS FALSE TOO -- by a count. `grep -rn
+    // ": public CostmapFilter"` returns FOUR subclasses, not three. The fourth
+    // is OURS: nav2_costmap_2d/plugins/costmap_filters/zone_parameter_filter.cpp,
+    // merged upstream, and it throws FIVE times -- :48, :80 and :149 are the
+    // node-lock guard, but :372 (applyState, unknown state) and :492
+    // (checkPendingParameterUpdates, failed set) are BOTH on the data path and
+    // BOTH reached from process(). A maintainer counting the family finds it in
+    // one grep, and it is the file we wrote.
+    //
+    // So the claim that survives is narrower and argues better: OF THE THREE
+    // FILTERS WE DID NOT WRITE, not one throws from process() and not one
+    // throws on a data-dependent condition -- three independent sites, one
+    // pattern. The fourth is the exception, it is ours, and closing its two
+    // data-path throws is the entire reason this package exists. This line is
+    // one of the two.
     RCLCPP_ERROR_THROTTLE(
       logger_, *(clock_), 2000,
       "ZoneParameterFilter: mask state %u is not declared under the filter's "
