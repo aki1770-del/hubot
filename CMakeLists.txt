@@ -80,6 +80,17 @@ if(BUILD_TESTING)
   ament_add_gtest(degrade_at_production_caller_test
     test/degrade_at_production_caller_test.cpp TIMEOUT 180)
   target_link_libraries(degrade_at_production_caller_test ${hubot_test_deps})
+
+  # THE SURVIVAL PROBE -- a separate EXECUTABLE, not a gtest target.
+  # fork+execv gives the process boundary that fork alone does not.
+  add_executable(zpf_survival_probe test/zpf_survival_probe.cpp)
+  target_link_libraries(zpf_survival_probe ${hubot_test_deps})
+
+  ament_add_gtest(survival_harness_test test/survival_harness_test.cpp TIMEOUT 300)
+  target_link_libraries(survival_harness_test ${hubot_test_deps})
+  target_compile_definitions(survival_harness_test PRIVATE
+    ZPF_SURVIVAL_PROBE_PATH="$<TARGET_FILE:zpf_survival_probe>")
+  add_dependencies(survival_harness_test zpf_survival_probe)
 endif()
 
 ament_package()
