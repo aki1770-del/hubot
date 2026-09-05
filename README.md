@@ -1,7 +1,19 @@
 # hubot
 
-**A nav2 costmap filter that applies speed and behaviour limits inside mapped zones —
-and tells you, in words, when a zone is not actually being enforced.**
+**hubot bridges a robot and a person, on the move.**
+
+A move is easy to state and never easy to make. Something starts at **A** and has to
+arrive at **B**, and there is always something in between — a doorway, a bay, a person
+walking through, a limit that has to hold. hubot's job is to put a **suggestion in
+front of a human while there is still time to act on it**: before the risk arrives,
+not after it has.
+
+It offers. It does not decide. **The person keeps the decision** — that is the whole
+point of a bridge rather than an override.
+
+The first component is a nav2 costmap filter. It applies speed and behaviour limits
+inside mapped zones, and — the part that matters — **it tells a person, in words, while
+a limit is still only *requested* and not yet in force.**
 
 ```
 find_package(hubot REQUIRED)   # or just add it to your workspace and build
@@ -172,13 +184,22 @@ enforcement failure. Your existing operator tools already render it.
 | `message` | a sentence to act on — *"Zone 2 is NOT being enforced on at least one target. Decide as if the zone's limits are not applied."* |
 | `values` | `zone_state`, `mask_state`, `enforced`, `configured`, `unconfirmed_targets`, `degraded_targets`, `pending_parameter_sets`, `targets`, and the triggering `event` |
 
-**`enforced` has three values and the middle one is the one people miss.**
+**`enforced` has three values, and ⚑ the middle one is the reason this package exists.**
 
 | value | means |
 |---|---|
 | `yes` | every target of the current state has **confirmed** |
-| `pending` | the sets are issued and unanswered. **Treat as no.** |
+| `pending` | ⚑ **the sets are issued and unanswered.** Nothing has gone wrong yet — and nothing is holding the robot back either. **Treat as no.** |
 | `NO` | a target rejected, threw, or fell silent past `set_parameters_timeout` — or the mask named a state with no configuration |
+
+⚑ **`pending` is the window this whole package is built for.** It is the moment the
+robot is entering a zone, the limit has been asked for, and **nobody yet knows whether
+it took.** The collision has not happened. The speed cap may still land a hundred
+milliseconds from now. **A person reading `pending` is being told something before the
+risk, not after it** — which is the only kind of telling that leaves them anything to
+do.
+
+`yes` and `NO` are history. **`pending` is the suggestion.**
 
 **`zone_state` and `mask_state` are different facts.** One is the state whose values
 are in force; the other is where the mask says you are. They agree in normal
@@ -213,7 +234,12 @@ against exactly one of them. Check for the constant, not the number:
 grep -r ZONE_PARAMETER_FILTER "$(ros2 pkg prefix nav2_costmap_2d)"/include
 ```
 
-**⚑ hubot cannot stop your robot, and you must supply that yourself.**
+**⚑ hubot does not stop your robot. You hold the stop, and that is deliberate.**
+
+**This is design, not shortfall** — hubot offers a person a suggestion; it does not take
+the decision. But it does mean **the stop has to exist on your side, and if you do not
+build it, nothing acts on what hubot says.** The mechanism, so you can see exactly what
+is and is not available to you:
 
 nav2's channel for "this layer's output is untrustworthy" is `Layer::isCurrent()`,
 which `ControllerServer::waitForCostmap()` gates on before terminating a goal. That
