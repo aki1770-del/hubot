@@ -1,14 +1,52 @@
 # hubot
 
+**A nav2 costmap filter.** It applies speed and behaviour limits inside mapped zones, and
+— the part that matters — **it tells a person, in words, when a limit was asked for and
+you do not yet know whether it took.**
+
+<!-- OBTAIN-LINE: no remote exists yet. When one does, the clone command replaces the
+     paragraph immediately below. Nothing else on this page has to move. -->
+
+⚑ **You cannot obtain this yet.** This repository has no remote and no published release.
+The build instructions below are accurate and the package builds; there is currently no
+URL to clone from. That is the honest state of it, and it is the first thing you should
+know before spending any more of your time here.
+
+**Three more bounds, before the pitch rather than after it:**
+
+- ⚑ **It has never run on a robot.** It builds, its plugin loads, and its tests drive it
+  through a live `LayeredCostmap` — in a gtest process. Not a vehicle, and not inside a
+  real `controller_server`. **Pass counts differ by which nav2 you build against, so they
+  are not quoted here without one**; both are under *"Read this before you deploy it"*.
+- **It is QM-class software. Nothing here is safety-certified.**
+- **It does not stop your robot.** It reports; you hold the stop. If you do not build the
+  stop, nothing acts on what hubot says.
+
+---
+
 ## Mission
 
 > **hubot is a method to bridge a robot and a human, from the perspective of the move.**
 >
 > **A move is mobility: something starts at A and arrives at B. Between A and B there is
 > always an obstacle. To avoid collision and to make the journey a better one, hubot
-> offers the human a suggestion before the actual risk arrives.**
+> offers the human a suggestion before the risk arrives.**
 
-Four things follow from that sentence, and every component here is built to them.
+⚑ **And the last clause of that sentence is a destination, not a description — so read it
+with what is built.** Today this component speaks when a zone is entered, when enforcement
+fails, and once every heartbeat period in between. **No lookahead is built.** It is handed
+the robot's *current* pose and nothing else — `process()` takes one
+`geometry_msgs::msg::Pose` (`src/zone_parameter_filter.cpp:525-528`), and there is no plan,
+path, trajectory or velocity anywhere in this component.
+
+**The *before* it earns today is before the ENFORCEMENT OUTCOME is known** — the window in
+which the limit has been asked for and nobody yet knows whether it took. That window is
+real, it is measured, and it is the reason this package exists; it is called `pending` and
+it is described below. **The *before* the mission sentence names — before the HAZARD — is
+the next thing, and it is not here yet.**
+
+Three things follow from the mission and are true of this component today; the fourth is
+what the sentence is still reaching for.
 
 **The unit is one move, A to B.** Not a feature, not a topic, not a package. If a thing
 we build does not serve a move that is underway, it does not belong here.
@@ -21,17 +59,11 @@ shows up in a rare failure has mis-read the problem.
 another node consumes — that is machinery. Useful, necessary, and not the bridge. **The
 bridge ends in someone who can read it.**
 
-⚑ **Before the risk, and as an offer.** A report issued after the collision is a log.
-hubot earns its place in the window where the risk has **not yet arrived** and a person
-can still act — and what it puts there is a **suggestion**, never a command. **The person
-keeps the decision.** A component that seizes the decision has replaced the human it was
-built to serve.
-
----
-
-The first component is a nav2 costmap filter. It applies speed and behaviour limits
-inside mapped zones, and — the part that matters — **it tells a person, in words, while
-a limit is still only *requested* and not yet in force.**
+⚑ **As an offer, and — one day — ahead of the risk.** What hubot puts in front of a person
+is a **suggestion**, never a command; **the person keeps the decision**, and a component
+that seizes it has replaced the human it was built to serve. That half is built. The other
+half — arriving *ahead of the hazard* rather than ahead of the answer — is not, and this
+page will not claim it until something in this repository does it.
 
 ---
 
@@ -76,9 +108,11 @@ your nav2 carries the constant, and the build cross-checks ours against it at co
 Either way a version number cannot tell you which you have: tag `1.5.1` and `lyrical` HEAD both
 declare `<version>1.5.1</version>`.
 
-**What still stands between you and running it is not the build.** This repository has no remote
-and no release tag; it builds, but obtaining the source is a separate question this page does not
-yet answer.
+**What still stands between you and running it is not the build.** This repository has **no
+remote**; it builds, but there is nowhere to clone it from — the obtain line at the top of this
+page is a placeholder, and it is still a placeholder. *(There is a local `0.1.0` tag. A tag in a
+repository nobody can fetch is not a release, and this sentence used to say "no release tag" —
+which the tree refutes.)*
 
 **Everything below describes a package you can now build.** It is accurate about what the filter
 does and how it is configured.
@@ -272,8 +306,26 @@ otherwise have had. **Making that decision possible is the whole design.**
 
 ## The surface you read to decide — `zone_decision`
 
-A `diagnostic_msgs/DiagnosticArray`, published on every zone transition and on every
-enforcement failure. Your existing operator tools already render it.
+A `diagnostic_msgs/DiagnosticArray`, published on every zone transition, on every
+enforcement failure, and every `liveness_period` in between.
+
+⚑ **What we know about how it reaches you, and what we do not.** The **message type** is the
+ROS-native diagnostic type, so no new interface package is involved and any tool that reads
+`diagnostic_msgs/DiagnosticArray` can read these rows. **Two things beyond that are yours, and
+we have measured neither:**
+
+- **The topic is not `/diagnostics`.** It is `zone_decision`, joined to your costmap's
+  namespace (`src/zone_parameter_filter.cpp:234-235`; the name is the `decision_topic`
+  parameter). `diagnostic_aggregator` and `rqt_robot_monitor` subscribe to `/diagnostics` by
+  convention, so **they will not find this topic without a remap.** A generic viewer pointed
+  at the topic directly will.
+- **The ranking is yours.** Nothing in these rows marks `enforced` as the field that decides
+  whether a zone is holding. In a viewer it arrives among every other diagnostic on the robot,
+  with no more prominence than a battery percentage.
+
+**We have not measured how any third-party tool renders this, and this page will not tell you
+that it does.** Every subscriber that exists today is one of this package's own tests or its
+harness.
 
 | field | carries |
 |---|---|
@@ -289,8 +341,17 @@ filter would call its own reading stale (at the shipped defaults that clamps 2.5
 and the filter logs one warning at startup naming both numbers). It is wide enough to survive one dropped or late
 heartbeat without expiring a healthy publisher, and narrow enough that a dead one is stale
 inside three periods. **If `now - header.stamp > valid_for_s`, stop believing the message** —
-including its `enforced` field. That is the check you have to perform; see the bound at the end
-of the liveness section for why we cannot perform it for you.
+including its `enforced` field.
+
+⚑ **That last check is yours, and the reason is narrower than "we cannot do it."** We do
+publish expiry verdicts against our own declared bound — `watching`, `costmap_age_s` and level
+`STALE` are exactly that, rendered on every message. What we cannot render is the verdict on
+*this* message, because it only becomes true after the moment we would have to publish it: if
+we are alive at that moment we have already sent you a newer message and the question is moot,
+and if we are not alive we cannot send anything at all. **The one case where the check matters
+is the case where we are gone** — and only something that outlives a message can judge that the
+message expired. `report_seq` is there so a frozen clock cannot fake liveness; the clock is not
+the obstacle, survivorship is. See the bound at the end of the liveness section.
 
 **It is published on every zone transition, on every enforcement change, and — ⚑ since
 2026-09-06 — every `liveness_period` seconds whether or not anything changed.** That last

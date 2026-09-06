@@ -340,7 +340,15 @@ protected:
   /// whether to trust the zone needs the BASIS: which zone, what it changed, on
   /// which targets, and above all WHETHER IT ACTUALLY TOOK EFFECT.
   /// `diagnostic_msgs/DiagnosticArray` is the ROS-native surface for exactly that
-  /// — no new interface package, and every existing operator tool renders it.
+  /// -- no new interface package needed.
+  ///
+  /// ⚑ IT USED TO SAY "and every existing operator tool renders it." That asserted an
+  /// outcome in software we have never run. It is also wrong in a way that matters:
+  /// we publish on `zone_decision` joined to the costmap's namespace, NOT on
+  /// `/diagnostics`, which is what `diagnostic_aggregator` and `rqt_robot_monitor`
+  /// subscribe to by convention -- so the convention tools do NOT find this topic
+  /// without a remap. The TYPE is shared; the TOPIC is not. Every subscriber that
+  /// exists today is one of this package's own tests or its harness.
   rclcpp_lifecycle::LifecyclePublisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
     decision_pub_;
   std::string decision_topic_{"zone_decision"};

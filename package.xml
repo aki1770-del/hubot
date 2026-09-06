@@ -4,12 +4,12 @@
   <name>hubot</name>
   <version>0.1.0</version>
   <description>
-    A method to bridge a robot and a human, from the perspective of the move. A move
-    is mobility: something starts at A and arrives at B, and between A and B there is
-    always an obstacle. To avoid collision and to make the journey a better one, hubot
-    offers the human a suggestion before the actual risk arrives. First component: a
-    nav2 costmap filter that applies limits inside mapped zones and tells a person, in
-    words, while a limit is still only requested and not yet in force.
+    A nav2 costmap filter that applies speed and behaviour limits inside mapped zones and
+    tells a person, in words, when a limit was requested and it is not yet known whether it
+    took. First component of hubot, a method to bridge a robot and a human from the
+    perspective of the move: A to B, an obstacle between, and the person keeping the
+    decision. The suggestion arrives before the ENFORCEMENT OUTCOME is known; no lookahead
+    is built, so it does not arrive before the hazard. Never run on a robot; QM-class.
   </description>
   <maintainer email="aki1770@gmail.com">Komada</maintainer>
   <license>Apache-2.0</license>

@@ -15,6 +15,14 @@ and compares. It cannot be satisfied by intending to be careful.
 
 HONEST BOUNDS -- what this does NOT do, stated here rather than discovered later
 --------------------------------------------------------------------------------
+* CHK-2 vs CHK-2T is a SPLIT, and the split is the honest bound. CHK-2 compares two files
+  and therefore returns the same verdict wherever the tree came from. CHK-2T needs a git
+  tag, which a `git clone --depth 1` does not fetch, so it reports UNVERIFIED there rather
+  than RED. UNVERIFIED IS NOT A PASS -- it means this clone could not supply the evidence.
+  Judging release state from a shallow clone is outside what this script can do, and the
+  previous version pretended otherwise by calling the absence a defect.
+* CHK-2T reads only the HIGHEST semver tag REACHABLE FROM HEAD. Tags on other branches,
+  and tags that exist only on a remote, are invisible to it.
 * CHK-3 guards ONE canonical block. Environment-scoped results elsewhere in the prose
   ("23 of 26 against tag 1.5.1") are legitimately different quantities measured on
   different trees, and this script does not adjudicate them. It requires that the tree's
@@ -22,10 +30,25 @@ HONEST BOUNDS -- what this does NOT do, stated here rather than discovered later
 * CHK-4 catches phrasings this project RETIRED. It is not a general drift detector: a
   brand-new doc sentence that misdescribes the code passes. The retired list grows by one
   line each time an operator sentence is reworded.
-* 44 of this package's 46 `src/...cpp:NNN` citations in prose are NOT checked. Whether
-  `cpp:728` still points at what its author meant is not mechanically derivable, and a
-  gate that pretended otherwise would be unsatisfiable. CHK-1 covers the subset that IS
-  derivable -- the `throw` sites -- because those are identified by their own text.
+* ⚑ LINE-NUMBER CITATIONS IN PROSE ARE MOSTLY UNCHECKED, AND THIS IS THE ONE PLACE THAT
+  SAYS SO. Re-derived 2026-09-06 over README, CHANGELOG, CMakeLists and doc/*.md:
+  **43** `cpp:NNN`, **16** `hpp:NNN`, **6** `README.md:NNN` -- 65 in all. CHK-1 mechanically
+  covers **3** of them (the `throw` sites, which are identified by their own text). The
+  remaining 62 are not mechanically derivable: whether `cpp:728` still points at what its
+  author meant cannot be computed, and a gate that pretended otherwise would be
+  unsatisfiable. Repairs are done by hand, against a quoted anchor, and only where the
+  prose quotes or names something findable in the source.
+  - That earlier read "44 of 46". Both figures were true when written. **The count moves
+    every time anyone edits either side**, which is the defect this whole file exists for,
+    reproduced in its own docstring. Re-derive it; do not cite it.
+  - The `README.md:NNN` class is the least stable of the three, because prose moves more
+    often than code. All 6 were invalidated at once on 2026-09-06 when the README's first
+    screen was reordered, and were repaired by hand in the same commit. Nothing detects
+    the next such break.
+  - Known residue after the 2026-09-06 pass: `doc/SOTIF_PERFORMANCE_INSUFFICIENCY.md`
+    mentions `cpp:479` deliberately, as the record of a citation that WAS wrong and was
+    repaired to `cpp:585`. It is a historical mention, not a live citation, and it is the
+    only one that intentionally points at nothing.
 
 Usage:  prose_matches_tree.py [ROOT]      run the checks   (exit 1 on any RED)
         prose_matches_tree.py --selftest  prove each check can FAIL
@@ -68,6 +91,12 @@ FORBIDDEN_TOKENS = [
     "take control", "seconds", "metres", "meters", "ahead",
 ]
 IMPERATIVE_MARKERS = ["Decide as if", "Do not rely on"]
+
+
+def ver(s):
+    """(major, minor, patch) or None. Tolerates a leading `v`."""
+    m = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", (s or "").strip())
+    return tuple(int(g) for g in m.groups()) if m else None
 
 
 def read(root, rel):
@@ -127,16 +156,78 @@ def run_checks(root):
         ok = cited == derived
         res.append(("CHK-1", ok, "README cites throw sites %s; tree has %s" % (cited, derived)))
 
-    # ---- CHK-2  tag / package.xml / newest CHANGELOG heading name the same version ----
-    tag = subprocess.run(["git", "-C", root, "describe", "--tags", "--abbrev=0"],
-                         capture_output=True, text=True).stdout.strip()
+    # ---- CHK-2  package.xml and the newest CHANGELOG heading name the same version ----
+    # ⚑ CLONE-INDEPENDENT BY CONSTRUCTION, and that is the whole point of the split.
+    # Both operands are files in the tree, so this limb returns the SAME verdict on the
+    # author's host and in a fresh shallow clone of the same commit.
+    #
+    # It used to also require a git tag, in one conjunction, and that made the gate report
+    # a different verdict about the SAME COMMIT depending on how the tree had been
+    # obtained: GREEN on the author's machine, `CHK-2 RED tag=<none>` in a clean-room
+    # `git clone --depth 1`, which fetches no tag objects. A works-on-my-machine defect
+    # inside the instrument built to prevent works-on-my-machine defects.
+    #
+    # ⚑ AND IT WAS THIS PACKAGE'S OWN PI-CLASS, MIRRORED. PI-CLASS is "the reassuring
+    # value is computed from the absence of negative evidence." CHK-2 computed the
+    # ALARMING value from the absence of evidence: `tag=<none>` is produced both by "this
+    # tree genuinely has no tag" and by "nothing fetched the tags", and the check called
+    # both of them a defect. The filter itself refuses that conflation -- a silent costmap
+    # reports STALE, not ERROR, because "nothing was measured and found bad; nothing was
+    # measured." The gate now does to itself what the filter does to the costmap.
     pk = re.search(r"<version>([^<]+)</version>", read(root, PKG))
     pkv = pk.group(1).strip() if pk else "<none>"
     ch = re.search(r"^## \[(\d+\.\d+\.\d+)\]", read(root, CHG), re.M)
     chv = ch.group(1) if ch else "<none>"
-    ok = tag and tag == pkv == chv
-    res.append(("CHK-2", bool(ok),
-                "tag=%s package.xml=%s CHANGELOG=%s" % (tag or "<none>", pkv, chv)))
+    res.append(("CHK-2", pkv != "<none>" and pkv == chv,
+                "package.xml=%s CHANGELOG=%s" % (pkv, chv)))
+
+    # ---- CHK-2T  the newest git tag, WHEN THIS CLONE CARRIES ONE ----
+    # Three outcomes, and the third is the reason this is a separate check:
+    #   tag NEWER than the declared version -> RED. The tree carries a release the prose
+    #       has not caught up to: prose asserting a version the tree does not carry.
+    #   tag EQUAL                           -> GREEN, at a release.
+    #   tag OLDER (or absent-but-present-tree) -> GREEN. An untagged commit ahead of the
+    #       last tag is the NORMAL state between releases and must never be RED for that
+    #       alone; the detail line names which state you are in.
+    #   NO TAG VISIBLE                      -> UNVERIFIED. Not a pass and not a failure.
+    #       Exit status is unaffected, because a gate that cannot be satisfied in a
+    #       shallow clone gets switched off, and a switched-off gate measures nothing.
+    #       It prints UNVER rather than GREEN because an absent verdict must not read
+    #       like a pass.
+    # ⚑ THE HIGHEST semver TAG REACHABLE FROM HEAD -- not the NEAREST one.
+    # `git describe --tags --abbrev=0` answers "which tag is closest behind HEAD", and
+    # when two tags sit on the same commit it may hand back the older. The question this
+    # check asks is "has this tree released something the prose has not caught up to",
+    # and only the highest reachable tag answers it. ⚑ The first cut of this check used
+    # `describe` and the "tag a newer version" control below reported CONTROL FAILED --
+    # the control found the defect in the check, which is what it is for.
+    tags = subprocess.run(["git", "-C", root, "tag", "--merged", "HEAD"],
+                          capture_output=True, text=True).stdout.split()
+    sem = [x for x in tags if ver(x)]
+    tag = max(sem, key=ver) if sem else (tags[0] if tags else "")
+    if not tag:
+        res.append(("CHK-2T", None,
+                    "no tag object in this clone (shallow clone, or no .git) -- the tag "
+                    "limb could not be evaluated. UNVERIFIED is not cleared. CHK-2 above "
+                    "ran on files and is authoritative here."))
+    elif ver(tag) is None or ver(pkv) is None:
+        res.append(("CHK-2T", None,
+                    "tag=%s package.xml=%s -- not both x.y.z, cannot compare" % (tag, pkv)))
+    elif ver(tag) > ver(pkv):
+        res.append(("CHK-2T", False,
+                    "tag=%s is NEWER than package.xml=%s -- the prose is behind a release "
+                    "this tree carries" % (tag, pkv)))
+    elif ver(tag) == ver(pkv):
+        # NOT "this commit is at a release": HEAD may be any number of commits past the
+        # tag. That distance is exactly the quantity that is not clone-independent, so it
+        # is deliberately not measured here.
+        res.append(("CHK-2T", True,
+                    "tag=%s == package.xml -- the prose names the newest release this "
+                    "tree carries" % tag))
+    else:
+        res.append(("CHK-2T", True,
+                    "package.xml=%s is ahead of newest tag=%s -- unreleased work between "
+                    "releases, which is normal and is not a defect" % (pkv, tag)))
 
     # ---- CHK-3  the tree's own test counts appear in the canonical block ----
     tdir = os.path.join(root, "test")
@@ -213,6 +304,10 @@ MUTATIONS = [
     ("CHK-1", RDM, lambda t: t.replace("`src/zone_parameter_filter.cpp:105`",
                                        "`src/zone_parameter_filter.cpp:999`", 1)),
     ("CHK-2", PKG, lambda t: t.replace("<version>", "<version>9.", 1)),
+    # ⚑ THE OTHER OPERAND. CHK-2 is a two-file agreement, so it needs a control on each
+    # side; mutating only package.xml would leave a check that could be satisfied by a
+    # CHANGELOG nobody ever re-derived.
+    ("CHK-2", CHG, lambda t: re.sub(r"^## \[\d+\.\d+\.\d+\]", "## [9.9.9]", t, 1, re.M)),
     ("CHK-3", os.path.join(DOCDIR, "SPEC_COVERAGE.md"),
      lambda t: re.sub(r"DERIVED FROM THE TREE: \d+", "DERIVED FROM THE TREE: 999", t, 1)),
     ("CHK-4", RDM, lambda t: t + "\n\nThe message reads: Zone 2 is NOT being enforced "
@@ -232,29 +327,66 @@ MUTATIONS = [
 ]
 
 
+# ⚑ CONTROLS THAT ACT ON THE REPOSITORY, NOT ON A FILE. CHK-2T's evidence is a git tag,
+# so its controls must be able to ADD one and to TAKE THEM ALL AWAY.
+#
+# The second is the one that had to exist. Every control above proves a check can go RED.
+# None of them can see the defect that was actually here: a check that went RED on an
+# absence. Proving "absence -> UNVERIFIED, and the run still exits 0" needs a control that
+# expects something OTHER than red, which is why `expect` is a tri-state and not a flag.
+REPO_MUTATIONS = [
+    ("CHK-2T", False, "tag a version NEWER than package.xml",
+     lambda dst, pkv: subprocess.run(["git", "-C", dst, "tag", bump(pkv)],
+                                     capture_output=True)),
+    ("CHK-2T", None, "delete every tag (the clean-room condition)",
+     lambda dst, pkv: [subprocess.run(["git", "-C", dst, "tag", "-d", tg],
+                                      capture_output=True)
+                       for tg in subprocess.run(["git", "-C", dst, "tag", "-l"],
+                                                capture_output=True,
+                                                text=True).stdout.split()]),
+]
+
+
+def bump(v):
+    p = ver(v)
+    return "%d.%d.%d" % (p[0] + 1, 0, 0) if p else "99.0.0"
+
+
+def pkg_version(root):
+    m = re.search(r"<version>([^<]+)</version>", read(root, PKG))
+    return m.group(1).strip() if m else "0.0.0"
+
+
+def _temp_repo(root, tag=True):
+    """A throwaway git repo holding a copy of `root`, tagged at its declared version."""
+    tmp = tempfile.mkdtemp(prefix="prose-nc-")
+    dst = os.path.join(tmp, "t")
+    shutil.copytree(root, dst, ignore=shutil.ignore_patterns(".git"))
+    subprocess.run(["git", "-C", dst, "init", "-q"], capture_output=True)
+    subprocess.run(["git", "-C", dst, "add", "-A"], capture_output=True)
+    subprocess.run(["git", "-C", dst, "-c", "user.email=n@n", "-c", "user.name=n",
+                    "commit", "-qm", "s"], capture_output=True)
+    if tag:
+        subprocess.run(["git", "-C", dst, "tag", base_tag(root)], capture_output=True)
+    return tmp, dst
+
+
 def selftest(root):
     print("NEGATIVE CONTROLS -- each mutation must turn exactly its own check RED.\n")
     base = {cid: ok for cid, ok, _ in run_checks(root)}
-    if not all(base.values()):
-        print("  refusing to run: the unmutated tree is not green -> %s"
-              % [c for c, v in base.items() if not v])
+    if any(v is False for v in base.values()):
+        print("  refusing to run: the unmutated tree is RED -> %s"
+              % [c for c, v in base.items() if v is False])
         return 1
-    print("  baseline: all %d checks GREEN\n" % len(base))
+    print("  baseline: %d checks, none RED\n" % len(base))
     bad = 0
     for cid, rel, mut in MUTATIONS:
-        tmp = tempfile.mkdtemp(prefix="prose-nc-")
-        dst = os.path.join(tmp, "t")
-        shutil.copytree(root, dst, ignore=shutil.ignore_patterns(".git"))
-        subprocess.run(["git", "-C", dst, "init", "-q"], capture_output=True)
-        subprocess.run(["git", "-C", dst, "add", "-A"], capture_output=True)
-        subprocess.run(["git", "-C", dst, "-c", "user.email=n@n", "-c", "user.name=n",
-                        "commit", "-qm", "s"], capture_output=True)
-        subprocess.run(["git", "-C", dst, "tag", base_tag(root)], capture_output=True)
-        p = os.path.join(dst, rel)
-        with open(p, encoding="utf-8") as f:
-            t = f.read()
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(mut(t))
+        tmp, dst = _temp_repo(root)
+        fp = os.path.join(dst, rel)
+        with open(fp, encoding="utf-8") as f:
+            txt = f.read()
+        with open(fp, "w", encoding="utf-8") as f:
+            f.write(mut(txt))
         got = {c: ok for c, ok, _ in run_checks(dst)}
         fired = got.get(cid) is False
         print("  %-6s mutate %-28s -> %s" % (cid, rel, "RED (control PASSES)" if fired
@@ -262,7 +394,35 @@ def selftest(root):
         if not fired:
             bad += 1
         shutil.rmtree(tmp, ignore_errors=True)
-    print("\n  %d/%d controls proved their check can fail." % (len(MUTATIONS) - bad, len(MUTATIONS)))
+
+    # ⚑ AND NOW THE OTHER DIRECTION. Above, every control removes truth and expects RED.
+    # These two change the EVIDENCE and expect a named outcome -- one of them not RED.
+    print()
+    for cid, expect, label, mut in REPO_MUTATIONS:
+        tmp, dst = _temp_repo(root)
+        mut(dst, pkg_version(dst))
+        got = {c: ok for c, ok, _ in run_checks(dst)}
+        actual = got.get(cid, "absent")
+        okc = actual is expect
+        word = {False: "RED", True: "GREEN", None: "UNVER"}
+        note = ""
+        if expect is None:
+            # The absence control carries a SECOND assertion, and it is the load-bearing
+            # one: the file limb must be unaffected and the run must still exit 0. A tag
+            # that was never fetched is not a defect in the package.
+            hard = got.get("CHK-2") is True and not any(v is False for v in got.values())
+            okc = okc and hard
+            note = "  [CHK-2 still GREEN and 0 RED: %s]" % ("yes" if hard else "NO")
+        print("  %-6s %-42s -> expected %-5s got %-5s %s%s"
+              % (cid, label, word.get(expect, "?"),
+                 word.get(actual, str(actual)),
+                 "(control PASSES)" if okc else "CONTROL FAILED", note))
+        if not okc:
+            bad += 1
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    total = len(MUTATIONS) + len(REPO_MUTATIONS)
+    print("\n  %d/%d controls proved their check behaves as claimed." % (total - bad, total))
     return 1 if bad else 0
 
 
@@ -280,12 +440,21 @@ def main():
     if st:
         return selftest(root)
     res = run_checks(root)
-    red = 0
+    red = unver = 0
     for cid, ok, detail in res:
-        print("  %-6s %-5s %s" % (cid, "GREEN" if ok else "RED", detail))
-        if not ok:
+        # ⚑ THREE STATES, and the third is deliberate. `None` means the evidence this
+        # check needs is not present in this tree -- not that the package is fine. It
+        # prints UNVER, never GREEN, because an absent verdict reads exactly like a pass.
+        word = "GREEN" if ok is True else ("RED" if ok is False else "UNVER")
+        print("  %-6s %-5s %s" % (cid, word, detail))
+        if ok is False:
             red += 1
-    print("\n  %d checks, %d RED" % (len(res), red))
+        elif ok is None:
+            unver += 1
+    print("\n  %d checks, %d RED, %d UNVERIFIED" % (len(res), red, unver))
+    if unver:
+        print("  UNVERIFIED is not a pass. It means this clone could not supply the "
+              "evidence, and it does not affect exit status on purpose.")
     return 1 if red else 0
 
 
