@@ -493,6 +493,55 @@ def run_checks(root):
                 "%d of the %d NAMED dirs exist and each is named by an install() rule "
                 "(%s); directories outside that list are not examined"
                 % (len(checked), len(SHIP_DIRS), ", ".join(checked))))
+
+    # ---- CHK-9  the workflow that runs every check above still declares its triggers ----
+    # ⚑ WHY THIS CHECK EXISTS AND EXACTLY WHAT IT CANNOT DO.
+    # Every other check in this file is only ever run because .github/workflows/gate.yml
+    # tells GitHub to run it. That file is therefore the one document in this repository
+    # whose failure is SILENT: a workflow with no `pull_request:` trigger does not report
+    # red, it reports NOTHING, and a pull request with no checks looks exactly like a pull
+    # request with nothing to check. That is the absent-verdict-reads-as-a-pass shape,
+    # sitting one layer above every check built to catch it.
+    #
+    # ⚑ THE BOUND, STATED RATHER THAN GLOSSED. This check CANNOT save a pull request that
+    # removes its own trigger: GitHub decides whether to run a workflow by reading the
+    # workflow file as that pull request would leave it, so a PR deleting `pull_request:`
+    # prevents the very run that would have caught it. Closing THAT requires a REQUIRED
+    # STATUS CHECK in branch protection -- a repository setting, not a file -- and no test
+    # in this tree can substitute for it. What this check does catch is the ordinary case:
+    # an edit that breaks the workflow's YAML or drops a trigger, caught on some later run
+    # rather than never.
+    wf = os.path.join(".github", "workflows", "gate.yml")
+    wfp = os.path.join(root, wf)
+    if not os.path.isfile(wfp):
+        res.append(("CHK-9", False,
+                    "%s is absent -- nothing runs the checks above automatically" % wf))
+    else:
+        try:
+            import yaml as _y9
+        except ImportError:
+            res.append(("CHK-9", None,
+                        "pyyaml absent, so the workflow could not be parsed. UNVERIFIED is "
+                        "not cleared: this limb says nothing about whether CI still runs."))
+        else:
+            try:
+                doc = _y9.safe_load(read(root, wf))
+            except Exception as e:
+                res.append(("CHK-9", False,
+                            "%s does not parse as YAML, so GitHub runs NOTHING from it -> %s"
+                            % (wf, e)))
+            else:
+                # `on:` is YAML 1.1 true; safe_load gives the boolean key, not the string.
+                trig = doc.get("on", doc.get(True)) if isinstance(doc, dict) else None
+                names = set(trig) if isinstance(trig, dict) else (
+                    set(trig) if isinstance(trig, list) else {trig})
+                want = {"push", "pull_request"}
+                miss = sorted(want - names)
+                res.append(("CHK-9", not miss,
+                            ("%s no longer declares %s -- those events run NO checks and "
+                             "report NOTHING" % (wf, ", ".join(miss))) if miss else
+                            "%s declares %s; a push and a pull request each run the gate"
+                            % (wf, ", ".join(sorted(want)))))
     return res
 
 
@@ -538,6 +587,12 @@ MUTATIONS = [
     # install space, which is the failure a reader cannot see by looking at the tree.
     ("CHK-8", CML, lambda t: t.replace("install(DIRECTORY launch params maps DESTINATION",
                                        "install(DIRECTORY launch params DESTINATION", 1)),
+    # ⚑ THE MUTATION IS THE SILENT DEFECT ITSELF: drop `pull_request:` from the triggers.
+    # A workflow mutated this way is still perfectly valid YAML and still runs on push,
+    # so nothing anywhere goes red -- pull requests simply stop being checked. If this
+    # control does not turn CHK-9 red, CHK-9 would not have noticed the real thing either.
+    ("CHK-9", os.path.join(".github", "workflows", "gate.yml"),
+     lambda t: t.replace("\n  pull_request:\n", "\n", 1)),
 ]
 
 

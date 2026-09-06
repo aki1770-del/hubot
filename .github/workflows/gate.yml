@@ -1,0 +1,356 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# hubot — the gate a contributor gets for free.
+#
+# WHY THIS FILE EXISTS. Until it did, every green result this package had ever
+# produced happened because someone on the maintaining side chose to run it by
+# hand. That put "is this right?" on the person opening the pull request, or on
+# us reading it afterwards. It is the machine's job. The stranger who opens the
+# first PR against this package should learn what she broke from the run, before
+# anyone here has looked at it.
+#
+# WHAT IT RUNS: the same things that were being run by hand — the full CTest
+# suite against RELEASED nav2, the prose-and-tree gate, the static safety
+# invariants, and the launch-side bring-up falsifier.
+#
+# ⚑ AND IT RUNS THE GATES' OWN NEGATIVE CONTROLS ON EVERY PULL REQUEST.
+# A gate that has never failed has measured nothing, so `controls` proves — on
+# your PR, not on some past afternoon — that each check can still go red.
+# ══════════════════════════════════════════════════════════════════════════════
+name: gate
+
+on:
+  push:
+    branches: ['**']
+    tags: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege. Nothing here writes to the repository, and nothing here needs
+# a secret — see the `secrets` note in the substrate step.
+permissions:
+  contents: read
+
+# A newer push supersedes an older run on the same ref. The contributor waits for
+# her latest commit, not for a queue behind it.
+concurrency:
+  group: gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # ⚑ THE SUBSTRATE, PINNED BY DIGEST. ubuntu:26.04 == "resolute", the distribution
+  # the released ROS "lyrical" nav2 debs are built for. A tag can move; a digest
+  # cannot, and a build whose base moved silently is not a reproduction.
+  BASE_IMAGE: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
+
+jobs:
+  # ── 1 ── the suite: build against RELEASED nav2 and run all ten CTest targets
+  suite:
+    name: suite (released nav2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      image: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
+    steps:
+      - name: substrate — released nav2 from packages.ros.org
+        run: |
+          set -eux
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl gnupg git
+          . /etc/os-release
+          curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+            -o /usr/share/keyrings/ros.key
+          echo "deb [signed-by=/usr/share/keyrings/ros.key] http://packages.ros.org/ros2/ubuntu $VERSION_CODENAME main" \
+            > /etc/apt/sources.list.d/ros2.list
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            build-essential cmake python3-colcon-common-extensions python3-yaml procps \
+            ros-lyrical-nav2-costmap-2d ros-lyrical-nav2-util ros-lyrical-nav2-ros-common \
+            ros-lyrical-nav2-msgs ros-lyrical-ament-cmake-gtest ros-lyrical-ament-lint-auto \
+            ros-lyrical-ament-lint-common ros-lyrical-rmw-fastrtps-cpp ros-lyrical-tf2-ros
+          rm -rf /var/lib/apt/lists/*
+
+      # ⚑ WHAT WE ARE BUILDING AGAINST, RECORDED RATHER THAN ASSUMED.
+      # packages.ros.org is a MOVING feed and the deb version is deliberately NOT
+      # pinned: pinning it turns the day the feed rotates into a RED the contributor
+      # cannot fix, and handing her an unfixable failure is the thing this workflow
+      # exists to stop. The cost of not pinning is that the substrate can drift under
+      # us — so it is PRINTED on every run, into the summary, where a drift is visible
+      # to a human instead of silent.
+      - name: record the substrate
+        run: |
+          set -eu
+          {
+            echo "### substrate"
+            echo '```'
+            . /etc/os-release; echo "os        : $PRETTY_NAME ($VERSION_CODENAME) $(dpkg --print-architecture)"
+            for p in nav2-costmap-2d nav2-util nav2-ros-common nav2-msgs; do
+              echo "$p: $(dpkg -s ros-lyrical-$p | awk -F': ' '/^Version/{print $2}')"
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@v5
+        with:
+          # CHK-2T reads the highest semver tag reachable from HEAD. Without the
+          # history and tags it degrades to UNVERIFIED — which the gate reports
+          # honestly rather than treating as a pass — but give it what it needs.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: git safe.directory (checkout runs as root in this container)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: build
+        shell: bash
+        run: |
+          # ⛑ `set -u` IS OFF ACROSS THE SOURCE, ON PURPOSE, AND THIS IS NOT STYLE.
+          # ROS's own setup.bash dereferences AMENT_TRACE_SETUP_FILES and COLCON_TRACE
+          # unguarded. Under `set -u` sourcing it aborts the step with an unbound-variable
+          # error BEFORE a single test runs -- and the step then exits 1 on a PERFECTLY
+          # HEALTHY tree. Measured 2026-09-07: the first draft of this workflow did exactly
+          # that, and it looked like it worked, because it was first tried on a tree with a
+          # deliberately broken invariant and duly went red. A gate that reds on everything
+          # satisfies 'it went red once' and measures nothing. Both directions are tested now.
+          set -o pipefail
+          set +u; source /opt/ros/lyrical/setup.bash; set -u
+          mkdir -p /ws/src && cp -r "$GITHUB_WORKSPACE" /ws/src/hubot && cd /ws
+          colcon build --packages-select hubot \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1 | tee /ws/build.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            {
+              echo "### build FAILED"
+              echo "The compiler errors, in order:"
+              echo '```'
+              grep -E " (error|fatal error): " /ws/build.log | head -40
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
+
+      # ⚑ THE TRAP THIS STEP EXISTS TO AVOID, MEASURED ON THIS PACKAGE 2026-09-07.
+      # A deliberately broken SOTIF safety invariant was injected into src/
+      # zone_parameter_filter.cpp. `colcon build` exited 0. `colcon test` ALSO
+      # EXITED 0. Only `colcon test-result` exited 1.
+      # A workflow written the obvious way — `run: colcon test` — would have gone
+      # GREEN while a safety invariant was red. That is Sakichi Vision 87 verbatim:
+      # "a green build that hides a failure violates Jidoka." `colcon test-result`
+      # is the gate; `colcon test` is only how the tests are executed.
+      - name: test — all 10 CTest targets
+        shell: bash
+        run: |
+          # ⛑ `set -u` IS OFF ACROSS THE SOURCE, ON PURPOSE, AND THIS IS NOT STYLE.
+          # ROS's own setup.bash dereferences AMENT_TRACE_SETUP_FILES and COLCON_TRACE
+          # unguarded. Under `set -u` sourcing it aborts the step with an unbound-variable
+          # error BEFORE a single test runs -- and the step then exits 1 on a PERFECTLY
+          # HEALTHY tree. Measured 2026-09-07: the first draft of this workflow did exactly
+          # that, and it looked like it worked, because it was first tried on a tree with a
+          # deliberately broken invariant and duly went red. A gate that reds on everything
+          # satisfies 'it went red once' and measures nothing. Both directions are tested now.
+          set -o pipefail
+          set +u; source /opt/ros/lyrical/setup.bash; set -u
+          cd /ws
+          colcon test --packages-select hubot --event-handlers console_direct+ \
+            2>&1 | tail -80 || true
+          set +e
+          colcon test-result --verbose 2>&1 | tee /ws/test-result.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          {
+            echo "### suite"
+            echo '```'
+            grep -E "^Summary:" /ws/test-result.log || tail -5 /ws/test-result.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ne 0 ]; then
+            {
+              echo ""
+              echo "**RED.** The failing targets and what each said:"
+              echo '```'
+              sed -n '/- /,$p' /ws/test-result.log | head -60
+              echo '```'
+              echo "The per-test XML is attached to this run as the \`suite-logs\` artifact."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
+
+      - name: keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-logs
+          path: |
+            /ws/build.log
+            /ws/test-result.log
+            /ws/build/hubot/test_results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ── 2 ── the bring-up: the four cases, on released nav2, from the install space
+  launch:
+    name: launch falsifier (bring-up)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
+    steps:
+      - name: substrate — released nav2, plus what a bring-up needs
+        run: |
+          set -eux
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl gnupg git
+          . /etc/os-release
+          curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+            -o /usr/share/keyrings/ros.key
+          echo "deb [signed-by=/usr/share/keyrings/ros.key] http://packages.ros.org/ros2/ubuntu $VERSION_CODENAME main" \
+            > /etc/apt/sources.list.d/ros2.list
+          apt-get update -qq
+          # ⚑ costmap_filter_info_server IS NOT A PACKAGE. It is an executable inside
+          # nav2_map_server. Anyone assembling this from a package list will look for
+          # ros-lyrical-nav2-costmap-filter-info-server, fail to find it, and conclude
+          # the released feed cannot bring a costmap filter up. It can.
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            build-essential cmake python3-colcon-common-extensions python3-yaml procps \
+            ros-lyrical-nav2-costmap-2d ros-lyrical-nav2-util ros-lyrical-nav2-ros-common \
+            ros-lyrical-nav2-msgs ros-lyrical-ament-cmake-gtest ros-lyrical-ament-lint-auto \
+            ros-lyrical-ament-lint-common ros-lyrical-rmw-fastrtps-cpp ros-lyrical-tf2-ros \
+            ros-lyrical-nav2-map-server ros-lyrical-nav2-lifecycle-manager \
+            ros-lyrical-ros2launch ros-lyrical-ros2topic ros-lyrical-ros2param
+          rm -rf /var/lib/apt/lists/*
+
+      - uses: actions/checkout@v5
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: build into an install space
+        shell: bash
+        run: |
+          # ⛑ `set -u` IS OFF ACROSS THE SOURCE, ON PURPOSE, AND THIS IS NOT STYLE.
+          # ROS's own setup.bash dereferences AMENT_TRACE_SETUP_FILES and COLCON_TRACE
+          # unguarded. Under `set -u` sourcing it aborts the step with an unbound-variable
+          # error BEFORE a single test runs -- and the step then exits 1 on a PERFECTLY
+          # HEALTHY tree. Measured 2026-09-07: the first draft of this workflow did exactly
+          # that, and it looked like it worked, because it was first tried on a tree with a
+          # deliberately broken invariant and duly went red. A gate that reds on everything
+          # satisfies 'it went red once' and measures nothing. Both directions are tested now.
+          set -o pipefail
+          set +u; source /opt/ros/lyrical/setup.bash; set -u
+          mkdir -p /ws/src && cp -r "$GITHUB_WORKSPACE" /ws/src/hubot && cd /ws
+          colcon build --packages-select hubot --install-base /opt/hubot \
+            --build-base /ws/build --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1 | tee /ws/build.log
+          rc=${PIPESTATUS[0]}; exit "$rc"
+
+      # ⚑ THE GATE PROVES IT CAN STILL FAIL, ON THIS PULL REQUEST, BEFORE IT IS TRUSTED
+      # TO PASS. --selftest asserts a knowingly WRONG expectation on the read-only
+      # overlay case and requires the gate to report DID NOT REPRODUCE. If this step
+      # goes green, the launch gate below is blind and its pass means nothing.
+      - name: negative control — the launch gate must be able to fail
+        shell: bash
+        env:
+          LAUNCH_GATE_LOGS: /tmp/lg_self
+        run: |
+          set -uo pipefail
+          bash /ws/src/hubot/test/launch_gate.sh /opt/hubot --selftest 2>&1 | tee /tmp/self.txt
+          rc=${PIPESTATUS[0]}
+          {
+            echo "### launch gate — negative control"
+            if [ "$rc" -eq 0 ]; then echo "PASSED: the gate reported the wrong expectation it was given."
+            else echo "**FAILED: the launch gate accepted a wrong expectation. It is measuring nothing.**"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: launch falsifier — the four cases
+        shell: bash
+        env:
+          LAUNCH_GATE_LOGS: /tmp/lg_real
+        run: |
+          set -uo pipefail
+          bash /ws/src/hubot/test/launch_gate.sh /opt/hubot 2>&1 | tee /tmp/real.txt
+          rc=${PIPESTATUS[0]}
+          {
+            echo "### launch falsifier"
+            echo '```'
+            grep -E "^(-- |     (enforced|VERDICT|⚑ VERDICT)|JUDGMENT)" /tmp/real.txt || tail -20 /tmp/real.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ne 0 ]; then
+            {
+              echo ""
+              echo "**RED.** What did not reproduce, and what it means:"
+              echo '```'
+              sed -n '/⚑ VERDICT/,$p' /tmp/real.txt | head -40
+              echo '```'
+              echo "Full launch logs are attached as the \`launch-logs\` artifact."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
+
+      - name: keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launch-logs
+          path: |
+            /tmp/lg_real/
+            /tmp/lg_self/
+            /ws/build.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ── 3 ── the controls: prove the prose-and-tree gate's checks can each still fail
+  controls:
+    name: negative controls (prose + tree)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # This one needs no ROS at all — it reads the tree and the prose. It runs on
+      # the bare runner so that a contributor who breaks only a document learns it
+      # in under a minute instead of waiting for a nav2 build.
+      # ⚑ WITHOUT pyyaml, CHK-7 AND CHK-9 REPORT UNVERIFIED RATHER THAN RUNNING.
+      # The gate is right to degrade honestly instead of printing a pass it did not
+      # earn — but an UNVERIFIED CHK-9 means nothing is checking that this very
+      # workflow still declares its triggers. Install it, so the honest degradation
+      # stays available for hosts that lack it and is never what CI actually does.
+      - name: pyyaml, so CHK-7 and CHK-9 actually run
+        run: python3 -c "import yaml" 2>/dev/null || sudo apt-get install -y -qq python3-yaml
+
+      - name: the gate itself
+        shell: bash
+        run: |
+          set -uo pipefail
+          python3 test/prose_matches_tree.py 2>&1 | tee /tmp/prose.txt
+          rc=${PIPESTATUS[0]}
+          {
+            echo "### prose-and-tree gate"
+            echo '```'
+            cat /tmp/prose.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      # ⚑ EVERY MUTATION MUST TURN EXACTLY ITS OWN CHECK RED. The count is deliberately
+      # NOT written here: the gate prints its own "N/N controls" line, and a number
+      # duplicated into a step name is a number that goes stale the day a control is
+      # added -- this step name said "14" for the hour in which the count became 15.
+      # This is the difference between "the gate ran" and "the gate can see", and it runs
+      # on every pull request because a check that has silently stopped being able to
+      # fail is indistinguishable from a check that passes.
+      - name: negative controls (each check must still be able to fail)
+        shell: bash
+        run: |
+          set -uo pipefail
+          python3 test/prose_matches_tree.py --selftest 2>&1 | tee /tmp/controls.txt
+          rc=${PIPESTATUS[0]}
+          {
+            echo "### negative controls"
+            echo '```'
+            cat /tmp/controls.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
