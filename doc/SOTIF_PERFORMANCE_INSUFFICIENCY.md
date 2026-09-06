@@ -232,6 +232,17 @@ accept one of these must not rely on `zone_decision` for that property.**
 > publisher (PI-4)** — use a `diagnostic_aggregator` staleness rule, or your own timer over
 > `report_seq`, which is the one field a stopped clock cannot fake.
 
+> **AoU-S7 — ⚑ A RELATIVE `node:` RESOLVES AT THE COSTMAP'S *PARENT* NAMESPACE, NOT ITS OWN.**
+> `src/zone_parameter_filter.cpp:292` applies nav2's `joinWithParentNamespace()` to your `node:`
+> field, and that function takes `node->get_namespace()` and **strips one level**
+> (`layer.cpp:88-96`, read in the image). So for a costmap node at `/robot1/local_costmap`, a
+> relative `node: controller_server` addresses **`/robot1/controller_server`** — the peer level,
+> which is where nav2 puts servers. **Verified as DELIVERING, not merely as non-breaking:** SC-7
+> drives a namespaced host with the target at the parent level and reaches `enforced: yes`; SC-8 is
+> its control and confirms a target left at **root** is correctly *not* reached. ⚑ **Both are the
+> only cases in this package that run outside root namespace** — every other test runs where a
+> joined and an unjoined name resolve identically. **An absolute `/name` is unaffected.**
+
 > **AoU-S6 — SILENCE ON `zone_decision` IS *"I AM NOT WATCHING"*, AND THE NODE'S DEATH IS OUTSIDE
 > THIS COMPONENT.** If the node dies the timer dies with it and the last message stands. Nothing
 > running inside a process can announce that process's own death. **The complete answer lives in
