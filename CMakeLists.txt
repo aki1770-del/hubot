@@ -124,13 +124,13 @@ if(BUILD_TESTING)
   # ⚑ THE SOTIF CLASS ORACLE (FSE, 2026-09-06). Every other suite here asserts
   # an INSTANCE of the yes-when-nobody-is-watching family; this one asserts the
   # PROPERTY over the liveness gate's configuration space, because a suite that
-  # adds one case per generation is always one generation behind. SC-1 and SC-3
-  # are PREDICTED RED on current source and have never been run — there is no
-  # ROS on the machine this was written on and no released nav2_costmap_2d
-  # carries ZONE_PARAMETER_FILTER, so the package cannot build at all today.
-  # ⚑ Wired here anyway, and deliberately: an unregistered test is a claim, not
-  # a feature — the defect this file recorded at :124 about the static lane.
-  # It must be RUN and its verdict recorded before any of it is believed.
+  # adds one case per generation is always one generation behind.
+  # ⚑ RUN 2026-09-06: SC-1, SC-3 and SC-5 RED (the three open findings, all
+  # confirmed by execution); SC-2, SC-4, SC-6 GREEN. No pre-existing case
+  # regressed — 33 cases, 2 failures, both in this target.
+  # ⚑ This comment said SC-1/SC-3 "have never been run… the package cannot build
+  # at all today". That was false when written and is kept in the record at
+  # test/sotif_gate_inertness_test.cpp rather than deleted.
   ament_add_gtest(sotif_gate_inertness_test
     test/sotif_gate_inertness_test.cpp TIMEOUT 300)
   target_link_libraries(sotif_gate_inertness_test ${hubot_test_deps})

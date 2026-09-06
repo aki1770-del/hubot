@@ -185,6 +185,20 @@ global_costmap:
 `id` is the pixel value. `1` to `255` are yours; **`0` is reserved** and means *leave
 every zone* — that is when `nominal_defaults` is restored.
 
+**`node:` may be absolute or relative, and both now behave the way you would expect.**
+An absolute name (`/controller_server`, as every example above writes it) is used exactly
+as given. A relative name (`controller_server`) is resolved **against the parent
+namespace** — the identical rule this filter already applied to its own four topic names.
+
+⚑ *Until 2026-09-06 it was not. We resolved our own names and passed yours through raw, so
+under any namespaced launch a relative `node:` resolved against the root while our topics
+resolved against the parent: a parameter client was built for a node that does not exist,
+the set never landed, and the only thing that eventually noticed was the `set_parameters`
+deadline — which reports a timeout, not a name. The word "namespace" appeared **zero
+times** in this file, so there was nowhere you could have read the requirement either.
+Absolute names were never affected, which is why every example above kept working and the
+fault stayed invisible to us.*
+
 > ### ⚑ Two warnings about this example, both measured 2026-09-06
 >
 > **1. `nominal_defaults` cannot be written as nested YAML, and we do not yet have a
@@ -470,7 +484,17 @@ filter.
 | parameter | default | set `<= 0` to |
 |---|---|---|
 | `liveness_period` | `1.0` s | disable the heartbeat entirely (warned at startup) |
-| `costmap_silence_timeout` | `2.0` s | keep the heartbeat but never report a stopped costmap |
+| `costmap_silence_timeout` | `2.0` s | switch off the **explicit** stopped-costmap report; a fallback budget of `liveness_period x 2.5` still applies |
+
+⚑ **`costmap_silence_timeout: 0` changed meaning on 2026-09-06, and the old meaning was a
+defect.** It used to mean *never report a stopped costmap*, and it delivered that by making
+the refuting flag unreachable — so a filter whose costmap had died an hour ago went on
+publishing `watching: yes`, `enforced: yes`, level `OK`, forever, from one line of YAML.
+**Suppressing a warning and asserting safety are different acts.** Disabling the detector
+now suppresses the explicit report and falls back to the same `x 2.5` budget that defines
+`valid_for_s`; it no longer licenses an affirmative claim that the costmap is running. If
+you are actively driving the costmap you still read `yes` — only the unfounded claim went
+away.
 
 ⚑ **THE PART THIS DOES NOT CLOSE, AND CANNOT.** **If the node itself dies, the timer dies
 with it**, no message arrives, and the last one stands — exactly as before. **Nothing

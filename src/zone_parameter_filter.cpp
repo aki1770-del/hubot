@@ -121,10 +121,17 @@ void ZoneParameterFilter::initializeFilter(
   } else if (costmap_silence_timeout_ <= 0.0) {
     RCLCPP_WARN(
       logger_,
-      "ZoneParameterFilter: costmap_silence_timeout is %.3f (<= 0), so the "
-      "heartbeat will keep publishing but will never report that the costmap "
-      "has stopped; `watching` will always read yes.",
-      costmap_silence_timeout_);
+      // ⚑ THIS MESSAGE PROMISED THE DEFECT. It said `watching` will always
+      // read yes -- accurately describing behaviour that was itself the fault,
+      // and telling the operator the affirmative claim was intended. The
+      // fallback budget is now announced instead, because an operator who
+      // switches off a detector needs to know what replaced it.
+      "ZoneParameterFilter: costmap_silence_timeout is %.3f (<= 0). The explicit "
+      "stopped-costmap report is off; the heartbeat keeps publishing and falls "
+      "back to a budget of %.3fs derived from liveness_period, because "
+      "suppressing a warning cannot license claiming the costmap is running.",
+      costmap_silence_timeout_,
+      liveness_period_ > 0.0 ? liveness_period_ * kValidForPeriods : 0.0);
   }
 
   filter_info_topic_ = joinWithParentNamespace(filter_info_topic);
@@ -254,17 +261,35 @@ void ZoneParameterFilter::loadStateConfig()
   // Obtain the node, parameter, and value for state entries
   auto read_entry =
     [&](const std::string & prefix) -> std::optional<StateParamEntry> {
-      const std::string target_node =
+      const std::string target_node_declared =
         node->declare_or_get_parameter<std::string>(prefix + ".node", std::string(""));
       const std::string param_name =
         node->declare_or_get_parameter<std::string>(prefix + ".parameter", std::string(""));
-      if (target_node.empty() || param_name.empty()) {
+      if (target_node_declared.empty() || param_name.empty()) {
         RCLCPP_ERROR(
           logger_,
           "ZoneParameterFilter: '%s' must declare non-empty 'node' and 'parameter'.",
           prefix.c_str());
         return std::nullopt;
       }
+      // ⚑ THE INTEGRATOR'S NAME GETS THE SAME LOOM AS OURS -- added 2026-09-06.
+      // We called joinWithParentNamespace() on all FOUR of our own topic names
+      // (:130, :142, :147, :215) and on ZERO of theirs. Under any namespaced
+      // launch a relative `node: controller_server` therefore resolved against
+      // the root while our topics resolved against the parent, an
+      // AsyncParametersClient was built for a node that does not exist, and the
+      // missing-client guard at issueAsyncSetParameters() could not fire --
+      // because the key it looks up is the same key we built the phantom under.
+      // The set then simply never lands, and the only thing that eventually
+      // notices is the set_parameters deadline, which reports a timeout rather
+      // than the name.
+      //
+      // Absolute names are UNAFFECTED: nav2's Layer::joinWithParentNamespace()
+      // returns any name beginning with '/' unchanged (layer.cpp:90-96, read at
+      // release tag 1.5.1), so a configuration that works today keeps working.
+      // The join is deliberately AFTER the empty-check above: it maps "" to
+      // "<parent>/", which is non-empty, and would silently defeat that guard.
+      const std::string target_node = joinWithParentNamespace(target_node_declared);
       const std::string value_key = prefix + ".value";
       if (!node->has_parameter(value_key)) {
         rcl_interfaces::msg::ParameterDescriptor descriptor;
@@ -920,8 +945,29 @@ void ZoneParameterFilter::livenessTick()
 
   // (2) The verdict.
   const double age = secondsSinceLastProcess();
-  const bool silent =
-    (costmap_silence_timeout_ > 0.0) && (age > costmap_silence_timeout_);
+  // ⚑ THE FALLBACK SILENCE BUDGET -- 2026-09-06. This line short-circuited on
+  // `costmap_silence_timeout_ > 0.0`, so one documented line of YAML
+  // (`costmap_silence_timeout: 0`, README: "keep the heartbeat but never report
+  // a stopped costmap") made `costmap_silent_` UNREACHABLE. notWatching() then
+  // returned false forever after the first tick and a filter whose costmap died
+  // an hour ago kept publishing `watching: yes`, `enforced: yes`, level OK.
+  //
+  // Disabling the detector removes a measurement; it does not manufacture a
+  // good one. But it equally does not license claiming we are blind while we
+  // are demonstrably being driven -- that is the degenerate reading SC-2
+  // rejects. So with the explicit budget switched off we fall back to one
+  // derived from the heartbeat we are still publishing: the same
+  // `kValidForPeriods` that defines `valid_for_s`, so a single constant governs
+  // "how long before we stop believing" on both surfaces rather than two that
+  // can drift apart.
+  //
+  // The explicit path is byte-for-byte unchanged when the operator sets a
+  // positive timeout, so no configured behaviour moves.
+  const double silence_budget =
+    costmap_silence_timeout_ > 0.0
+    ? costmap_silence_timeout_
+    : (liveness_period_ > 0.0 ? liveness_period_ * kValidForPeriods : 0.0);
+  const bool silent = (silence_budget > 0.0) && (age > silence_budget);
   const bool flipped = (costmap_silent_.exchange(silent) != silent);
   if (flipped && silent) {
     RCLCPP_ERROR(
@@ -929,7 +975,10 @@ void ZoneParameterFilter::livenessTick()
       "ZoneParameterFilter: no costmap update for %.3fs (limit %.3fs). This "
       "filter is NOT watching: it is not sampling the mask and its last report "
       "is that old. Nothing below is a live reading.",
-      age, costmap_silence_timeout_);
+      // ⚑ the EFFECTIVE budget, not the configured one: with the detector
+      // disabled the configured value is 0.0, and printing it would tell an
+      // operator the limit they just tripped was zero seconds.
+      age, silence_budget);
   }
 
   // (3) ⚑ SPEAK EVERY TICK, changed or not. This is the countermeasure and it
@@ -1085,8 +1134,27 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
     "valid_for_s",
     std::to_string(liveness_period_ > 0.0 ? liveness_period_ * kValidForPeriods : 0.0));
 
+  // ⚑ THE REASON MUST SURVIVE THE HEARTBEAT -- fixed 2026-09-06. `event` was
+  // gated on a non-empty `detail`, and the 1 Hz heartbeat passes std::string()
+  // on every tick where nothing flipped (:942-944). So a per-failure reason --
+  // "target 'X' not enforcing: <why>" -- was published on exactly ONE message,
+  // over volatile transport, and was gone a second later while the condition it
+  // explained persisted: `enforced` stayed NO and `degraded_targets` stayed
+  // non-zero with nothing left saying why. We told a person where to look and
+  // then took it away.
+  //
+  // The last non-empty reason is carried forward instead. NO NEW FIELD: the
+  // standing bar is that no key is added to this message until an existing one
+  // is removed or made to survive the heartbeat, and this is the second of
+  // those. It is self-correcting rather than sticky -- every resolution path
+  // publishes its own non-empty detail ("target 'X' accepted a set", "costmap
+  // updates resumed"), which replaces it. `report_seq` remains the field that
+  // tells a reader whether this message is new.
   if (!detail.empty()) {
-    add("event", detail);
+    last_event_ = detail;
+  }
+  if (!last_event_.empty()) {
+    add("event", last_event_);
   }
 
   diagnostic_msgs::msg::DiagnosticArray arr;

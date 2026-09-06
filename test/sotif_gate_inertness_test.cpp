@@ -19,14 +19,35 @@
 // implied. See doc/SOTIF_PERFORMANCE_INSUFFICIENCY.md for the analysis this
 // file is the executable half of.
 //
-// ⚑ THIS FILE HAS NEVER BEEN COMPILED OR RUN. There is no ROS on the machine it
-// was written on (`/opt/ros` does not exist) and no released `nav2_costmap_2d`
-// carries `ZONE_PARAMETER_FILTER`, so the whole package cannot build today —
-// which is the package's own headline disclosure. Every other suite here
-// records a RED-before / GREEN-after; THIS ONE DOES NOT AND MUST NOT CLAIM ONE.
-// It is UNVERIFIED, not cleared. The first integrator who can build this
-// package should expect SC-1 to FAIL on current source; that expectation is a
-// prediction from reading, not a measurement.
+// ⚑ EXECUTED 2026-09-06. Image `nav2-lyrical-main-compat:latest`, `--network=none`,
+// nav2_costmap_2d 1.5.1 with ZONE_PARAMETER_FILTER = 4. Build exit 0 in 29.9 s,
+// first attempt, zero errors.
+//
+//   SC-1  RED   -- `enforced=yes watching=yes level=OK costmap_age_s=1.506290`
+//                  from a costmap stopped 1.5 s, with the detector configured off
+//   SC-2  GREEN -- negative control holds, so SC-1's red is not vacuous
+//   SC-3  RED   -- `valid_for_s=2.500000` against a 2.0 s silence budget, at defaults
+//   SC-4  GREEN -- the never-driven branch already reported `unknown` + STALE;
+//                  it was UNASSERTED, not wrong
+//   SC-5  RED   -- deadline arm 0 messages, control arm 22, incompatible_qos fired
+//   SC-6  GREEN -- tripwire armed under AoU-S1
+//
+// Full suite re-run the same session: 33 gtest cases, 2 failures, both of them
+// SC-1 and SC-3. NO PRE-EXISTING CASE REGRESSED.
+//
+// ⚑ THIS HEADER SAID "THIS FILE HAS NEVER BEEN COMPILED OR RUN… the whole package
+// cannot build today" UNTIL THE ABOVE WAS MEASURED, and the sentence is recorded
+// here rather than deleted because it was FALSE WHEN WRITTEN. The instrument was
+// `ls /opt/ros` and `which colcon` on the HOST; docker, the image and a built
+// workspace were all present. A method that could not have surfaced the
+// counter-example has measured nothing (Vision 77). FBR had corrected this exact
+// error in another seat's file the day before.
+//
+// ⚑ STILL UNVERIFIED, and not cleared: SC-5's result is true of the rmw in this
+// image only -- DEADLINE Request/Offered handling is implementation-specific.
+// And every case here drives updateCosts() BY HAND from the test thread, so the
+// thread-independence claim the whole liveness design rests on is simulated, not
+// exercised. See doc/SOTIF_PERFORMANCE_INSUFFICIENCY.md §6.
 //
 // ---------------------------------------------------------------------------
 // WHY A CLASS ORACLE AND NOT A FIFTH CASE.
@@ -517,6 +538,128 @@ TEST_F(SotifGateInertness, SC4_NeverDrivenReportsUnknownPositivelyNotMerelyNotYe
     EXPECT_EQ(s.level, diagnostic_msgs::msg::DiagnosticStatus::STALE)
       << "never-driven is STALE, not ERROR: " << render(s);
   }
+}
+
+// ===========================================================================
+// SC-5 — ⚑ THE README'S OWN RECOMMENDED COUNTERMEASURE MUST ACTUALLY MATCH THIS
+// PUBLISHER. THIS CASE EXISTS TO REFUTE ITS AUTHOR.
+//
+// `README.md:450-454` tells an integrator that the complete answer to a dead
+// publisher lives in their process, and names it: *"a `DEADLINE` QoS on your
+// subscription."* FSE's PI-4 says that advice cannot work here, because
+// `decision_pub_` is created with a bare `rclcpp::QoS(10)`
+// (zone_parameter_filter.cpp:147), leaving the OFFERED deadline at the rmw
+// default of infinity — and DEADLINE is a Request/Offered QoS, so an offered
+// infinity does not satisfy any finite request. The subscription would not
+// match and the consumer would receive NOTHING.
+//
+// ⚑ THAT WAS THE ONE FINDING IN THE SOTIF TABLE DERIVED FROM A SPECIFICATION
+// RATHER THAN FROM SOURCE READ ON DISK, and it was published as
+// CONFIRMED-BY-SPEC / UNVERIFIED-BY-EXECUTION. This case executes it.
+//
+// TWO ARMS, and the control is not optional: a default-QoS subscriber must
+// receive, or a silent deadline arm proves nothing but a broken probe.
+//
+// ⚑ RESULT DIRECTION. The assertion is written as the property an integrator
+// SHOULD get — the recommended subscription receives messages. GREEN means
+// PI-4 IS REFUTED and the README advice is sound. RED means the package
+// recommends a mechanism it prevents.
+//
+// ⚑ AND THE ANSWER IS RMW-DEPENDENT. Whatever this returns is true of the rmw
+// in this image and does NOT generalise to an integrator's stack. That bound
+// rides the result; it is the class of claim this unit has published without
+// earning before.
+// ===========================================================================
+TEST_F(SotifGateInertness, SC5_DeadlineQoSSubscriberMustMatchThisPublisher)
+{
+  ASSERT_TRUE(build(/*liveness_period=*/0.1, /*silence_timeout=*/2.0));
+
+  auto probe = std::make_shared<rclcpp::Node>("sotif_deadline_probe");
+  std::atomic_int default_count{0};
+  std::atomic_int deadline_count{0};
+  std::atomic_bool incompatible{false};
+
+  auto sub_control = probe->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+    "zone_decision", rclcpp::QoS(10),
+    [&default_count](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr) {
+      default_count.fetch_add(1);
+    });
+
+  rclcpp::QoS deadline_qos(10);
+  deadline_qos.deadline(rclcpp::Duration::from_seconds(2.5));   // = valid_for_s at 1 Hz
+  rclcpp::SubscriptionOptions so;
+  so.event_callbacks.incompatible_qos_callback =
+    [&incompatible](rclcpp::QOSRequestedIncompatibleQoSInfo &) {
+      incompatible.store(true);
+    };
+  auto sub_deadline = probe->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+    "zone_decision", deadline_qos,
+    [&deadline_count](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr) {
+      deadline_count.fetch_add(1);
+    },
+    so);
+
+  exec_->add_node(probe);
+  driveUntilConfirmed(2000ms);
+  exec_->remove_node(probe);
+
+  ASSERT_GT(default_count.load(), 0)
+    << "the DEFAULT-QoS control arm received nothing -- the probe is broken and "
+       "the deadline arm's silence would prove nothing";
+
+  EXPECT_GT(deadline_count.load(), 0)
+    << "a subscriber requesting a finite DEADLINE -- the mechanism README.md:451 "
+       "tells an integrator to use -- received NOTHING from this publisher, which "
+       "offers no deadline (QoS(10) at zone_parameter_filter.cpp:147). "
+       "incompatible_qos event fired: " << (incompatible.load() ? "YES" : "no")
+    << ". control arm received " << default_count.load() << " messages.";
+}
+
+// ===========================================================================
+// SC-6 — ⚑ A TRIPWIRE UNDER AoU-S1, NOT A DEFECT TEST. IT IS GREEN TODAY AND
+// MUST GO RED WHEN THE WORLD CHANGES.
+//
+// AoU-S1 tells an integrator: this component reports, it cannot stop anything,
+// SO THE GATING CODE IS YOURS. That assumption is the most consequential of the
+// six, because an integrator who misreads it builds no gate at all.
+//
+// Its factual basis: CostmapFilter::updateCosts() runs setCurrent(true)
+// unconditionally AFTER process() returns (costmap_filter.cpp:133) and is
+// declared `final` (costmap_filter.hpp:114). So `Layer::isCurrent()` -- the
+// channel nav2 itself reads, via LayeredCostmap::isCurrent() and
+// ControllerServer::waitForCostmap() -- cannot carry this filter's fault.
+//
+// ⚑ BUT THE HEADER ALSO RECORDS A PATCH THAT WOULD CHANGE THIS: moving
+// setCurrent(true) AHEAD of process() (hpp:540-547). If that ever lands
+// upstream, AoU-S1's basis is gone and the assumption must be rewritten -- and
+// nothing today would notice.
+//
+// So this asserts the CURRENT truth. It passing is the assumption holding.
+// ⚑ IT GOING RED IS NOT A REGRESSION -- IT IS THE SIGNAL TO REWRITE AoU-S1.
+// That sentence is the whole reason the case exists (Vision 9: the machine
+// catches it, not the reader).
+// ===========================================================================
+TEST_F(SotifGateInertness, SC6_Tripwire_TheFilterCannotTellTheStackItIsNotCurrent)
+{
+  ASSERT_TRUE(build(/*liveness_period=*/0.1, /*silence_timeout=*/0.3));
+
+  driveUntilConfirmed(800ms);
+
+  // Stop driving. The filter will shortly report NOT WATCHING on its own surface.
+  std::this_thread::sleep_for(900ms);
+
+  const auto samples = recorder_->since(0);
+  ASSERT_FALSE(samples.empty());
+  const auto & last = samples.back();
+  ASSERT_EQ(get(last, "watching"), "NO")
+    << "precondition: the filter must be reporting NOT WATCHING on its own "
+       "surface, or this case is not asking its question: " << render(last);
+
+  EXPECT_TRUE(filter_->isCurrent())
+    << "⚑ AoU-S1'S BASIS HAS CHANGED. This filter now CAN carry its fault on "
+       "Layer::isCurrent(), the channel nav2 reads. That is good news and it "
+       "makes AoU-S1 WRONG -- rewrite it, and tell integrators the stack can "
+       "see this after all. Do not 'fix' this test.";
 }
 
 int main(int argc, char ** argv)

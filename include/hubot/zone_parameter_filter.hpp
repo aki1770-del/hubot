@@ -330,6 +330,22 @@ protected:
   /// created until ACTIVATE (costmap_2d_ros.cpp:314). The gap between them is
   /// every ordinary bringup, not an edge case -- and `resetFilter()` re-opens
   /// it on every ClearEntireCostmap.
+  /// ⚑ DELIBERATELY TWO DISJUNCTS, NOT THREE -- 2026-09-06, and the third one
+  /// was tried and MEASURED WRONG rather than reasoned away.
+  ///
+  /// `test/sotif_gate_inertness_test.cpp` SC-1 proposes, in its own comment,
+  /// `|| costmap_silence_timeout_ <= 0.0` as the fix. It was implemented
+  /// exactly as written and it turns SC-1 GREEN and SC-2 **RED** -- and SC-2 is
+  /// that file's own non-optional negative control, which states: *if SC-2 ever
+  /// goes red, SC-1 passing means nothing.* A constant disjunct cannot tell a
+  /// driven costmap from a stopped one, so it buys SC-1 by making the filter
+  /// never assert `yes` at all, which is the degenerate pass SC-2 exists to
+  /// reject.
+  ///
+  /// The gate here was always right; its INPUT was the thing that could not
+  /// move. The fallback silence budget now lives in livenessTick(), so
+  /// `costmap_silent_` becomes reachable with the detector disabled and this
+  /// function is left alone. Both cases pass on the input fix.
   bool notWatching() const {return !ever_processed_ || costmap_silent_;}
 
   /// The four-valued enforcement token: "NO", "unknown", "pending" or "yes".
@@ -352,6 +368,11 @@ protected:
 
   /// Last token actually put on the wire, so the above can tell.
   std::string last_published_token_;
+  /// The last non-empty `event` reason, re-published on every heartbeat so a
+  /// reason outlives the single volatile message that carried it. Written only
+  /// from publishDecision(), which its callers enter holding the costmap mutex
+  /// -- the same guarantee `last_published_token_` above already relies on.
+  std::string last_event_;
 
   // One per-state-override or per-nominal-default entry.
   struct StateParamEntry
