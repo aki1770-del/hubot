@@ -26,6 +26,17 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
   the sentence under which a defect survives a sweep.
 
 ### Fixed
+- ⚑ **The package invited an install it cannot deliver, and the disqualifying fact was 220 lines
+  below the invitation.** The README's `find_package(hubot REQUIRED)` block sat near the top with
+  nothing between it and a reader; the release gap was recorded honestly, but in the bounds
+  section near the end. **An accurate fact a reader reaches after acting is not a disclosure.**
+  The gap now precedes the instructions, says plainly that the package cannot be installed today,
+  and hands the reader a one-line check to run against their own `nav2_costmap_2d` rather than a
+  claim to trust.
+- ⚑ **`doc/SPEC_COVERAGE.md` marked *"installable without an upstream merge"* as **FIT**.** It is
+  a **GAP**, and the evidence column proved the wrong thing: presence of a `pluginlib` export says
+  nothing about whether the source compiles. The row asked whether an integrator can install this
+  and was answered with whether we had packaged it.
 - ⚑ **`enforced: yes` and `watching: yes` from a filter that had never been driven once.**
   `initializeFilter()` runs at configure and starts the heartbeat; the costmap's update thread is
   not created until activate. In that gap — **every ordinary bringup, and re-opened by every

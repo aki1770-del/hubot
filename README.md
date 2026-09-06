@@ -33,6 +33,45 @@ The first component is a nav2 costmap filter. It applies speed and behaviour lim
 inside mapped zones, and — the part that matters — **it tells a person, in words, while
 a limit is still only *requested* and not yet in force.**
 
+---
+
+## ⚑ YOU CANNOT INSTALL THIS TODAY. Read this before the instructions below.
+
+**No released `nav2_costmap_2d` can build this package.** `src/zone_parameter_filter.cpp:119`
+and `:123` name `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, a `uint8_t` constant carried on the
+`main` and `lyrical` **branches** and in **no release**. Against tag `1.5.1`, from a clean
+workspace, the compiler says so on the first file:
+
+```
+src/zone_parameter_filter.cpp:119:37: error: 'ZONE_PARAMETER_FILTER' is not a member of 'nav2_costmap_2d'
+```
+
+**Do not take our word for it — check your own installation:**
+
+```
+grep -r ZONE_PARAMETER_FILTER "$(ros2 pkg prefix nav2_costmap_2d)"/include
+```
+
+**No output means this package will not build for you.** A version number cannot tell you:
+tag `1.5.1` and `lyrical` HEAD both declare `<version>1.5.1</version>`, and only the second
+one works.
+
+**What you are waiting on:** a nav2 release that carries that constant. We have not measured
+one existing. **That command is your clock** — when it prints a line, this package builds for
+you. It is a wait, not a wall, and it is checkable on your machine rather than datable on this
+page.
+
+⚑ **And it is our line, not upstream's omission.** That constant is a discriminator for the
+`CostmapFilterInfo.type` field — a number your own `costmap_filter_info_server` reads out of
+your YAML. This package needs to **agree** with that number; it never needed to **obtain** it
+from nav2's header. The dependency is a copying mistake of ours, the fix is ours, and it is
+not made yet.
+
+**Everything below describes a package you cannot yet install.** It is accurate about what the
+filter does and how it is configured; it is aspirational about your getting it.
+
+---
+
 ```
 find_package(hubot REQUIRED)   # or just add it to your workspace and build
 ```
