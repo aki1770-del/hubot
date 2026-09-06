@@ -4,16 +4,16 @@
 — the part that matters — **it tells a person, in words, when a limit was asked for and
 you do not yet know whether it took.**
 
-<!-- OBTAIN-LINE: the remote now exists and is EMPTY. When the pre-push blockers clear and
-     the code is pushed, the paragraph below is replaced by the clone command. Nothing else
-     on this page has to move. -->
+<!-- OBTAIN-LINE: live. This block is the clone command; keep it first on the page. -->
 
-⚑ **The repository exists and the code is not in it yet.** `https://github.com/aki1770-del/hubot`
-was created on 2026-09-06 and is **empty** — no commits, no release. The build instructions below
-are accurate and the package builds and passes against a released nav2 in a clean room, but
-**there is nothing at that URL to clone today.** That is the honest state of it, and it is the
-first thing you should know before spending any more of your time here. What stands between the
-two is listed in the changelog under Unreleased; none of it is a defect in the code.
+```
+git clone https://github.com/aki1770-del/hubot
+```
+
+⚑ **Read the next section before you build it.** The package builds and passes against a released
+`nav2_costmap_2d` in a clean room — **and it has never run on a robot.** `0.1.0` names an earlier
+tree than the default branch; everything after it, including **one silent breaking change**, is in
+`CHANGELOG.md` under Unreleased. Read that before you upgrade past the tag.
 
 **Three more bounds, before the pitch rather than after it:**
 
