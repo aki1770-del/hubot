@@ -311,6 +311,21 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
     control is only evidence if its description reproduces it.
 
 ### Changed
+
+- ⚑ **BREAKING, SILENT, AND FOR THE OPPOSITE TOPOLOGY — disclosed here while it is still free to disclose.**
+  The namespace join applied to the integrator's `node:` field fixed the case where a *relatively named*
+  target sat outside a namespaced costmap. **It broke the mirror case.** `Layer::joinWithParentNamespace()`
+  strips one level, so with a costmap in `/local_costmap` a relative `foo` now resolves to `/foo`, where
+  `rcl_node_resolve_name` previously gave `/local_costmap/foo`. **A target inside the costmap's own
+  namespace worked before the join and does not now.** It changes behaviour with no error and no warning:
+  the set is issued to a node that may not exist, and the report says only that nothing answered.
+  - **Migration**: if your `node:` names a target inside the costmap's own namespace, **write it absolute.**
+    An absolute name is unaffected — `joinWithParentNamespace()` returns any name beginning with `/` unchanged.
+  - **Why it is disclosed now**: nobody holds this package, so this costs one paragraph. After the first
+    consumer exists it costs their debugging session. The package argues exactly this for its own breaking
+    changes — the cheapest moment it will ever be.
+  - **Raised by FSE as PI-16, measured from nav2 source, not by the author of the join.** ⚑ **The join
+    predates the target-describing commit; a bisecting reader needs them separate.**
 - **Four dated self-corrections moved here from `README.md`.** A correction addressed to a reader of the previous page — of whom there are none outside this project — is discipline for a reader who does not exist. The corrected statements stay on the page; what each used to say, and why it was wrong, lives here.
   - *Not-current channel* — the page said the channel was *"closed to a derived filter three ways, measured on released `lyrical`"*. There is no released `lyrical`; it is a branch, and releases are tags. And the package's own header had already retracted "closed three ways": `Layer::setCurrent(bool)` is **public** (`layer.hpp:147`, in the `public:` region `:61`–`:181`), so the capability exists in the base class and is erased by statement order in the derived one, not by an architecture. The retracted sentence had been restated on the page in the same commit that corrected the header.
   - *Consumer rule* — it read *"refuse to drive on `enforced: NO` or `pending`"*: a blacklist, which cannot be complete and fails open — a consumer coded literally against those two strings would have read the new `unknown` as permission. It is a whitelist: proceed only on `enforced: yes`.
