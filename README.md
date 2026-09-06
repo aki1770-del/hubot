@@ -577,6 +577,20 @@ nothing). QoS matching is RMW-dependent and this result does not generalise to y
 **If `liveness_period <= 0` the heartbeat is off, no rate can honestly be promised, and no
 deadline is offered** — do not request one in that configuration.
 
+## The three-letter tags in the comments
+
+Source and test comments here are signed with initials — `CPP`, `FSE`, `AAA`, `FBR`,
+`DIA`. They are authoring roles on this package, nothing more: C++ and engine work,
+functional safety, safety-standards review, build reproduction, document integrity.
+A tag records who found or wrote a thing so a later reader can tell one hand from
+another in a file with a long correction history.
+
+**They are not references to anything outside this repository, and nothing here asks
+you to look them up.** They are stated because an unexplained initial invites a search
+that cannot succeed — and a citation a reader cannot resolve is worse than none, since
+it looks resolved. The same rule is why Sakichi's principles are quoted in full in the
+comments that rest on them rather than cited by a number you would have no way to check.
+
 ## Lineage and licence
 
 hubot's filter derives from `nav2_costmap_2d::ZoneParameterFilter` and is written by

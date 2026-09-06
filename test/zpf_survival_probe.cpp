@@ -3,7 +3,7 @@
 //
 // ⚑ THE SURVIVAL PROBE — a separate EXECUTABLE, on purpose.
 //
-// WHY (written before the act, OPS-070(B)):
+// WHY (written before the act):
 //
 // The package's central claim is that it DEGRADES where upstream ABORTS. Upstream's
 // abort is not "an exception is thrown"; it is THE PROCESS DIES:
@@ -16,7 +16,7 @@
 //   * EXPECT_NO_THROW is only evaluated if control RETURNS to the assertion. abort(),
 //     exit(), a terminate raised on another thread, or a deadlock all skip the oracle
 //     entirely. An oracle skipped by the failure mode it exists to detect has measured
-//     nothing (CLAUDE.md §0).
+//     nothing.
 //   * degrade_at_production_caller_test.cpp drives updateCosts() on the gtest MAIN
 //     thread and spins the executors on that same thread. Production drives it on
 //     Costmap2DROS's map-update thread while the executor spins elsewhere. The

@@ -3,7 +3,7 @@
 //
 // ⚑ THE PARENT. It exists to be ALIVE when the child is not.
 //
-// WHY (written before the act, OPS-070(B)):
+// WHY (written before the act):
 //
 // hubot's whole claim is that it DEGRADES where upstream ABORTS, and upstream's abort
 // IS process death. Every oracle we had for that claim lived inside the process whose

@@ -40,7 +40,8 @@
 // here rather than deleted because it was FALSE WHEN WRITTEN. The instrument was
 // `ls /opt/ros` and `which colcon` on the HOST; docker, the image and a built
 // workspace were all present. A method that could not have surfaced the
-// counter-example has measured nothing (Vision 77). FBR had corrected this exact
+// counter-example has measured nothing -- go to the actual place and see the
+// actual thing, because second-hand descriptions lie. FBR had corrected this exact
 // error in another seat's file the day before.
 //
 // ⚑ STILL UNVERIFIED, and not cleared: SC-5's result is true of the rmw in this
@@ -660,8 +661,8 @@ TEST_F(SotifGateInertness, SC5_DeadlineQoSSubscriberMustMatchThisPublisher)
 //
 // So this asserts the CURRENT truth. It passing is the assumption holding.
 // ⚑ IT GOING RED IS NOT A REGRESSION -- IT IS THE SIGNAL TO REWRITE AoU-S1.
-// That sentence is the whole reason the case exists (Vision 9: the machine
-// catches it, not the reader).
+// That sentence is the whole reason the case exists: the machine catches it,
+// not the reader.
 // ===========================================================================
 TEST_F(SotifGateInertness, SC6_Tripwire_TheFilterCannotTellTheStackItIsNotCurrent)
 {

@@ -14,7 +14,7 @@
 // matters is an INTEGRATION case — a real target node that rejects a parameter,
 // driven through a live executor. That test is OWED and is NOT here. What is here
 // is the construction-level guarantee plus the degrade flag's contract. A suite
-// that cannot fail on the real defect has measured nothing (CLAUDE.md §0), so
+// that cannot fail on the real defect has measured nothing, so
 // this file must NOT be read as proving the abort is gone.
 
 #include <gtest/gtest.h>

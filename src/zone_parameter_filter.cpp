@@ -161,7 +161,7 @@ void ZoneParameterFilter::initializeFilter(
       liveness_period_ > 0.0 ? liveness_period_ * kValidForPeriods : 0.0);
   }
 
-  // ⚑ V15 / SC-3: a wrong configuration is made VISIBLE, never silently
+  // ⚑ SC-3: a wrong configuration is made VISIBLE, never silently
   // corrected. Named once, at configure, with both numbers and the clamp.
   // NOTE: the shipped defaults (liveness_period 1.0, costmap_silence_timeout
   // 2.0) trip this. That is a value decision about the defaults, recorded here
@@ -355,15 +355,29 @@ void ZoneParameterFilter::loadStateConfig()
       }
       // ⚑ THE INTEGRATOR'S NAME GETS THE SAME LOOM AS OURS -- added 2026-09-06.
       // We called joinWithParentNamespace() on all FOUR of our own topic names
-      // (:130, :142, :147, :215) and on ZERO of theirs. Under any namespaced
-      // launch a relative `node: controller_server` therefore resolved against
-      // the root while our topics resolved against the parent, an
-      // AsyncParametersClient was built for a node that does not exist, and the
+      // (:130, :142, :147, :215) and on ZERO of theirs, so a relative
+      // `node: controller_server` was handed to rclcpp raw. A parameter client
+      // was then built for a node that does not exist, and the
       // missing-client guard at issueAsyncSetParameters() could not fire --
       // because the key it looks up is the same key we built the phantom under.
       // The set then simply never lands, and the only thing that eventually
       // notices is the set_parameters deadline, which reports a timeout rather
       // than the name.
+      //
+      // ⚑ THIS COMMENT DESCRIBED THE MECHANISM BACKWARDS UNTIL 2026-09-06,
+      // and so did the changelog entry that shipped with it. Both said the
+      // relative name "resolved against the root while our topics resolved
+      // against the parent". That is refuted by its own evidence: resolving
+      // `controller_server` against the root gives `/controller_server`, which
+      // IS the intended node, and there would have been no defect to fix.
+      // Measured instead: rclcpp builds the service name as
+      // `<remote_node_name>/set_parameters` (parameter_client.cpp:74) and hands
+      // that RELATIVE name to rcl_node_resolve_name (client.c:123), which
+      // expands it against THE OWNING NODE'S namespace. From a filter hosted by
+      // `/local_costmap/local_costmap`, `controller_server` therefore became
+      // `/local_costmap/controller_server` -- resolved against the CHILD, not
+      // the root. The fix was right; the account of why was wrong, and a wrong
+      // account is how the next person rebuilds the defect.
       //
       // Absolute names are UNAFFECTED: nav2's Layer::joinWithParentNamespace()
       // returns any name beginning with '/' unchanged (layer.cpp:90-96, read at
@@ -371,6 +385,19 @@ void ZoneParameterFilter::loadStateConfig()
       // The join is deliberately AFTER the empty-check above: it maps "" to
       // "<parent>/", which is non-empty, and would silently defeat that guard.
       const std::string target_node = joinWithParentNamespace(target_node_declared);
+      // Remember the mapping ONLY where the join actually moved the name: that
+      // is exactly the case where the failure sentence would otherwise name
+      // something the integrator cannot find in her own YAML. Where two
+      // different declared names land on one target we erase rather than guess
+      // -- naming the wrong YAML line is worse than naming none.
+      if (target_node_declared != target_node) {
+        const auto prior = declared_target_names_.find(target_node);
+        if (prior == declared_target_names_.end()) {
+          declared_target_names_.emplace(target_node, target_node_declared);
+        } else if (prior->second != target_node_declared) {
+          declared_target_names_.erase(prior);
+        }
+      }
       const std::string value_key = prefix + ".value";
       if (!node->has_parameter(value_key)) {
         rcl_interfaces::msg::ParameterDescriptor descriptor;
@@ -581,8 +608,8 @@ void ZoneParameterFilter::process(
       // applyState(0) only ISSUES async set_parameters; the results arrive later
       // in checkPendingParameterUpdates(). Clearing the latch now published
       // `enforced: yes` on a restore nothing had confirmed — a success-shaped
-      // value inside the feature built to abolish success-shaped values
-      // (Sakichi Vision 14). It is the same defect this package names in
+      // value inside the feature built to abolish success-shaped values --
+      // Sakichi's anti-Jidoka. It is the same defect this package names in
       // upstream's CostmapFilter::updateCosts(), which sets current_ = true
       // unconditionally after process() returns.
       //
@@ -826,6 +853,39 @@ void ZoneParameterFilter::markTargetHealthy(const std::string & target_node)
   }
 }
 
+// ⚑ THE SENTENCE THAT DECIDES WHETHER SHE WALKS. See the header for why this
+// exists; in one line: this component's entire product is telling a person what
+// to go and look at, and an unanswered set used to produce the same words
+// whether the target was running-and-silent or NOT THERE AT ALL. Those are
+// opposite instructions to the operator, and only one of them is a node.
+std::string ZoneParameterFilter::describeUnansweredTarget(
+  const std::string & target_node,
+  const rclcpp::AsyncParametersClient::SharedPtr & client) const
+{
+  std::string out;
+  if (client && client->service_is_ready()) {
+    out = ". A parameter service IS discovered at '" + target_node +
+      "': something is running under that name and did not answer, so that node "
+      "is the place to look.";
+  } else {
+    // ⚑ States what was OBSERVED, never "the node is absent". Discovery is
+    // asynchronous, so a negative here is this process's view and not proof.
+    // Claiming absence would replace `names a healthy node` with `declares a
+    // live node dead` -- the same defect, mirrored.
+    out = ". NO parameter service has been discovered at '" + target_node +
+      "': this filter reached nothing, so the cause is most likely the NAME or a "
+      "target that never came up -- NOT a fault at a running node. Discovery is "
+      "asynchronous, so this is what this filter has seen, not proof of absence.";
+  }
+  const auto it = declared_target_names_.find(target_node);
+  if (it != declared_target_names_.end()) {
+    out += " The YAML declares `node: " + it->second +
+      "`, which this filter resolved against its parent namespace to '" +
+      target_node + "'.";
+  }
+  return out;
+}
+
 void ZoneParameterFilter::issueAsyncSetParameters(
   const std::string & target_node,
   const std::vector<rclcpp::Parameter> & params)
@@ -849,11 +909,13 @@ void ZoneParameterFilter::issueAsyncSetParameters(
   // reported rather than dropped quietly.
   while (pending_sets_.size() >= kMaxPendingSets) {
     const std::string dropped = pending_sets_.front().target_node;
+    const auto dropped_client = pending_sets_.front().client;
     pending_sets_.erase(pending_sets_.begin());
     markTargetDegraded(
       dropped,
       "more than " + std::to_string(kMaxPendingSets) +
-      " sets are in flight; the oldest was discarded unanswered");
+      " sets are in flight; the oldest was discarded unanswered" +
+      describeUnansweredTarget(dropped, dropped_client));
   }
 
   unconfirmed_targets_.insert(target_node);
@@ -873,7 +935,7 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
   // function is called from the top of process(), process() is reached from
   // CostmapFilter::updateCosts(), which is bare, from LayeredCostmap, which has
   // no try/catch anywhere -- so a throw here is std::terminate and the
-  // navigation node dies. Sakichi Vision 20: the halt must cost less than the
+  // navigation node dies. Sakichi's rule: the halt must cost less than the
   // defect.
   // wait_for(0s) polls without blocking the costmap update loop.
   const rclcpp::Time now = clock_->now();
@@ -892,12 +954,13 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
         (now - it->issued_at).seconds() > set_parameters_timeout_)
       {
         const std::string target = it->target_node;
+        const auto client = it->client;
         it = pending_sets_.erase(it);
         markTargetDegraded(
           target,
           "no answer within " + humanSeconds(set_parameters_timeout_) +
           "s of the set being issued; an unanswered request is not a "
-          "successful one");
+          "successful one" + describeUnansweredTarget(target, client));
         continue;
       }
       ++it;
@@ -922,7 +985,7 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
     // The upstream INTENT is right and is kept verbatim in the comment above: a
     // silently-swallowed failure would leave the robot on the value the safety
     // zone tried to change. But a robot whose nav stack aborts is not safer than
-    // one that degrades loudly and keeps navigating. Sakichi Vision 20 — the halt
+    // one that degrades loudly and keeps navigating. Sakichi's rule — the halt
     // must cost less than the defect.
     //
     // So: never silent, never fatal. Every failure is logged at ERROR with its
@@ -956,8 +1019,9 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
 
 // ⚑ HUBOT — THE HUMAN-DECISION SURFACE.
 //
-// Komada-voice 2026-09-05: "zone parameter is for robot. not for human. but we
-// need it for human decision. build it."
+// The brief this feature was built to, from the author named in the copyright
+// header: "zone parameter is for robot. not for human. but we need it for
+// human decision. build it."
 //
 // Upstream publishes a bare state byte. A byte is a robot's input: it selects a
 // parameter set and nothing about it is a reason. A person deciding whether to
@@ -1022,7 +1086,7 @@ double ZoneParameterFilter::declaredValidForS() const
   // believe. A bridge must not promise the human more currency than the robot's
   // own doubt allows. Fixed in the value, not the oracle. The warning that names
   // both numbers fires at configure (initializeFilter), once, so a wrong
-  // configuration is made visible rather than silently corrected (V15).
+  // configuration is made visible rather than silently corrected.
   return costmap_silence_timeout_ > 0.0 ?
          std::min(from_heartbeat, costmap_silence_timeout_) :
          from_heartbeat;
@@ -1428,6 +1492,9 @@ void ZoneParameterFilter::resetFilter()
   state_param_map_.clear();
   nominal_defaults_.clear();
   param_clients_.clear();
+  // Keyed off the same reload as param_clients_; a stale entry would attribute
+  // a failure to a YAML line the current configuration no longer contains.
+  declared_target_names_.clear();
 
   // ⚑ THE FAREWELL, published from the cleared state so that every field in it
   // is true at the moment it is sent: no mask, no configuration, nothing

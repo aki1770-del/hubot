@@ -220,6 +220,40 @@ protected:
   void markTargetDegraded(const std::string & target_node, const std::string & why);
 
   /**
+   * @brief Say, in the failure sentence itself, whether anything is actually
+   *        present at the name we are blaming -- and how that name was built.
+   *
+   * ⚑ THIS EXISTS BECAUSE THE COMPONENT ONCE NAMED A HEALTHY NODE.
+   *
+   * A set that is never answered has two completely different causes and one
+   * sentence used to cover both: the target is running and did not reply, or
+   * NOTHING IS THERE AT ALL because the name is wrong or the target never came
+   * up. "no answer within Ns" describes only the first, and an operator reading
+   * it at 03:00 walks to a node -- which, in the second case, is either healthy
+   * or absent. Either way her minutes and her trust are spent on our error
+   * while the robot is still moving.
+   *
+   * The namespace join fixed the ONE configuration that produced this. It did
+   * not fix the sentence, and the sentence is the whole product: this component
+   * exists to tell a person what to go and look at.
+   *
+   * Returns a suffix appended to the failure reason, so it reaches BOTH the log
+   * and the `event` field of `zone_decision`. Reports what was OBSERVED --
+   * "no parameter service has been discovered" -- never "the node is absent",
+   * because graph discovery is asynchronous and this is a read of what this
+   * process has seen. Replacing "names a healthy node" with "declares a live
+   * node dead" would be the same defect mirrored.
+   *
+   * Thread note: introduces no new concurrency. The client is already driven
+   * from this same costmap thread by issueAsyncSetParameters(), and
+   * `service_is_ready()` is a non-blocking read of the graph cache. It runs
+   * only on the failure path, once per timed-out set.
+   */
+  std::string describeUnansweredTarget(
+    const std::string & target_node,
+    const rclcpp::AsyncParametersClient::SharedPtr & client) const;
+
+  /**
    * @brief Record that a target answered successfully, which is the ONLY event
    *        that retracts a fault against it, and keep the flag in step.
    */
@@ -448,6 +482,15 @@ protected:
   // Keyed by target_node; values are bare-named Parameters to restore.
   std::map<std::string, std::vector<rclcpp::Parameter>> nominal_defaults_;
   std::map<std::string, rclcpp::AsyncParametersClient::SharedPtr> param_clients_;
+
+  /// Resolved target name -> the name the integrator actually wrote in YAML,
+  /// recorded ONLY where the namespace join changed it. A failure sentence that
+  /// names `/zpf_target_node` is unusable to a reader whose YAML says
+  /// `zpf_target_node`; she cannot connect the two, and connecting them is the
+  /// whole repair. If two different declared names resolve onto one target the
+  /// entry is ERASED rather than guessed -- a message that names the wrong YAML
+  /// line is worse than one that names none.
+  std::map<std::string, std::string> declared_target_names_;
 
   // Client is held with its future: destroying it early breaks the future.
   //

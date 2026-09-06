@@ -156,15 +156,36 @@ if(BUILD_TESTING)
   # an INSTANCE of the yes-when-nobody-is-watching family; this one asserts the
   # PROPERTY over the liveness gate's configuration space, because a suite that
   # adds one case per generation is always one generation behind.
-  # ⚑ RUN 2026-09-06: SC-1, SC-3 and SC-5 RED (the three open findings, all
-  # confirmed by execution); SC-2, SC-4, SC-6 GREEN. No pre-existing case
-  # regressed — 33 cases, 2 failures, both in this target.
+  # ⚑ A RUN ON 2026-09-06 SAID SC-1, SC-3 AND SC-5 RED; SC-2, SC-4, SC-6
+  # GREEN; 33 cases, 2 failures. THAT IS HISTORY, NOT THE STATE OF THIS TREE,
+  # and it is kept rather than deleted because two things are wrong with it.
+  # It names THREE red and counts TWO failures, so it did not agree with
+  # itself on the day it was written. And all three named cases were worked
+  # on AFTERWARDS -- see the CHANGELOG entries for the liveness fallback,
+  # `declaredValidForS()` and the decision publisher's offered deadline --
+  # with nothing coming back to update this comment. A comment that states a
+  # test colour goes false the moment someone repairs what it measured.
+  # The colours belong to a run. Read the run, not this line.
   # ⚑ This comment said SC-1/SC-3 "have never been run… the package cannot build
   # at all today". That was false when written and is kept in the record at
   # test/sotif_gate_inertness_test.cpp rather than deleted.
   ament_add_gtest(sotif_gate_inertness_test
     test/sotif_gate_inertness_test.cpp TIMEOUT 300)
   target_link_libraries(sotif_gate_inertness_test ${hubot_test_deps})
+
+  # ⚑ THE NAMESPACED-HOST DISCRIMINATOR. The finding it answers was recorded as
+  # visible only in a real multi-process stack and "structurally invisible to
+  # every in-process fixture, which hosts the target at root namespace where a
+  # relative name resolves correctly BY ACCIDENT". That was read as needing a
+  # robot. It does not: the variable is where the HOST lives, not the target.
+  # This fixture puts the filter's own node in `/local_costmap` and leaves the
+  # target at the root, which is the one thing no other suite here does.
+  # Cases A/B assert the resolved name and its arrival; C/D are a PAIR asserting
+  # that the failure sentence tells an operator whether there is a node to walk
+  # to at all -- remove the discrimination and one of the two goes red.
+  ament_add_gtest(namespaced_target_resolution_test
+    test/namespaced_target_resolution_test.cpp TIMEOUT 300)
+  target_link_libraries(namespaced_target_resolution_test ${hubot_test_deps})
 
   # ⚑ THE STATIC INVARIANTS, WIRED IN 2026-09-06. It had been committed since
   # 2026-09-05 and referenced by NOTHING -- not this file, not a hook, not a

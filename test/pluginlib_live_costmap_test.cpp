@@ -524,7 +524,7 @@ TEST_F(PluginlibLiveCostmap, B_LiveLayeredCostmap_UpdateMap_DegradesInsteadOfAbo
 
 // B2 — ⚑ THE HUMAN'S HALF, AND IT WAS NOT ASSERTED ANYWHERE UNTIL 2026-09-06.
 //
-// WHY (written before the act, OPS-070(B)). Test B proves the ROBOT survives.
+// WHY (written before the act). Test B proves the ROBOT survives.
 // That is one half of this package's claim and it is the half a machine cares
 // about. The other half is Feature 2: upstream expressed "I could not enforce
 // this zone" by killing the process; hubot replaces that with a sentence a

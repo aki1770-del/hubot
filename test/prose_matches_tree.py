@@ -53,6 +53,7 @@ HONEST BOUNDS -- what this does NOT do, stated here rather than discovered later
 Usage:  prose_matches_tree.py [ROOT]      run the checks   (exit 1 on any RED)
         prose_matches_tree.py --selftest  prove each check can FAIL
 """
+import io
 import os
 import re
 import shutil
@@ -112,6 +113,30 @@ def doc_files(root):
     return out
 
 
+# ⚑ THE REACH OF EVERY CHECK ABOVE, STATED AS A CHECK. `doc_files()` globs `.md`
+# and nothing else, so every prose check in this file is blind to any other
+# document format -- and a text search over a ZIP container returns 0 for every
+# pattern, which reads exactly like a clean result. On 2026-09-06 that cost a
+# real one: `doc/SPEC_COVERAGE.docx` was tracked, dated 2026-09-05, and its front
+# page still read "THE PACKAGE AS COMMITTED WILL NOT BUILD" long after
+# `doc/SPEC_COVERAGE.md:8` recorded "SUPERSEDED 2026-09-06. IT BUILDS". No
+# instrument here could see it, and a pre-publish audit that searched it as text
+# CLEARED it -- the conclusion happened to be wrong, and the warrant was absent
+# either way.
+#
+# The remedy is not to teach this file every container format. It is to refuse to
+# let a document exist here that this file cannot read, so the coverage claim and
+# the coverage are the same size. A coverage claim that overstates its reach is
+# the defect class this whole package is about.
+def unreadable_docs(root):
+    """(offenders, doc_dir_present). Any file under doc/ this gate cannot read."""
+    d = os.path.join(root, DOCDIR)
+    if not os.path.isdir(d):
+        return [], False
+    return sorted(n for n in os.listdir(d)
+                  if os.path.isfile(os.path.join(d, n)) and not n.endswith(".md")), True
+
+
 # ---------------------------------------------------------------- branch extraction
 def message_branches(src):
     """Return [(level, [string literals]), ...] for publishDecision's if/else chain."""
@@ -134,6 +159,46 @@ def message_branches(src):
         lits = re.findall(r'"((?:[^"\\]|\\.)*)"', code)
         out.append((level, lits))
     return out
+
+
+# --- SC-11: the OTHER sentences a person reads. -----------------------------
+# SC-9 reads publishDecision()'s branch messages and nothing else. Those are not
+# the only operator-facing text this binary emits: markTargetDegraded()'s `why`
+# is carried on the `event` field, and since 2026-09-06 describeUnansweredTarget()
+# writes the longest and most directive sentence in the package -- the one that
+# tells a person whether there is a node to walk to at all. That text was
+# OUTSIDE every oracle in this file on the day it was written, which is how the
+# sentence that decides a 03:00 walk came to be the least-guarded string here.
+DEGRADE_FNS = [
+    "std::string ZoneParameterFilter::describeUnansweredTarget(",
+    "void ZoneParameterFilter::checkPendingParameterUpdates()",
+    "void ZoneParameterFilter::issueAsyncSetParameters(",
+]
+
+
+def degrade_reason_literals(src):
+    """String literals in the failure sentences that reach `event`.
+
+    Returns (literals, functions_found). A caller must treat a short
+    functions_found as a FAILURE to evaluate and never as a pass: if these
+    functions are renamed, a silent empty result would report GREEN over an
+    unread surface, which is the absent-verdict-reads-as-a-pass defect this
+    project has already paid for once.
+    """
+    lits, found = [], 0
+    for fn in DEGRADE_FNS:
+        start = src.find(fn)
+        if start < 0:
+            continue
+        end = src.find("\n}\n", start)
+        if end < 0:
+            continue
+        found += 1
+        body = src[start:end]
+        code = "\n".join(ln for ln in body.split("\n")
+                          if not ln.lstrip().startswith("//"))
+        lits.extend(re.findall(r'"((?:[^"\\]|\\.)*)"', code))
+    return lits, found
 
 
 # ---------------------------------------------------------------- the checks
@@ -296,6 +361,37 @@ def run_checks(root):
                 "; ".join(prob) if prob else
                 "%d degraded all instruct belief; %d reassuring instruct nothing"
                 % (degraded, reassuring)))
+
+    # ---- CHK-5  no document exists here that this gate cannot read ----
+    offenders, present = unreadable_docs(root)
+    if not present:
+        res.append(("CHK-5", False,
+                    "doc/ is absent -- the check cannot be evaluated, which is not a pass"))
+    else:
+        res.append(("CHK-5", not offenders,
+                    "doc/ holds a file no check in this gate can read -> " +
+                    "; ".join(offenders) +
+                    " (a text search over a container returns 0 for every pattern, "
+                    "which reads exactly like a clean result)"
+                    if offenders else
+                    "every file in doc/ is readable prose this gate actually checks"))
+
+    # ---- SC-11  the failure sentences carried on `event` obey SC-9's rule too ----
+    lits, found = degrade_reason_literals(src)
+    if found < len(DEGRADE_FNS) or not lits:
+        res.append(("SC-11", False,
+                    "only %d of %d failure-sentence functions were found (%d literals) -- "
+                    "the check cannot be evaluated, which is not a pass"
+                    % (found, len(DEGRADE_FNS), len(lits))))
+    else:
+        blob = " ".join(lits).lower()
+        hits = [tok for tok in FORBIDDEN_TOKENS
+                if re.search(r"\b" + re.escape(tok), blob)]
+        res.append(("SC-11", not hits,
+                    "forbidden token in a failure sentence -> " + "; ".join(hits)
+                    if hits else
+                    "%d literals across %d failure-sentence functions, no forbidden token"
+                    % (len(lits), found)))
     return res
 
 
@@ -324,6 +420,12 @@ MUTATIONS = [
         'st.message = "Outside any zone. Slow down.";', 1)),
     ("SC-10", SRC, lambda t: t.replace('st.message = "Outside any zone; nominal defaults are in force.";',
                                        'st.message = "Outside any zone. Decide as if you may proceed.";', 1)),
+    # ⚑ Anchored on a literal that exists ONLY inside describeUnansweredTarget(),
+    # so a control that lands anywhere else cannot report a false pass -- the
+    # lesson SC-9's own first control taught this file at cpp:648.
+    ("SC-11", SRC, lambda t: t.replace(
+        '"is the place to look.";',
+        '"is the place to look. Stop the robot.";', 1)),
 ]
 
 
@@ -338,6 +440,12 @@ REPO_MUTATIONS = [
     ("CHK-2T", False, "tag a version NEWER than package.xml",
      lambda dst, pkv: subprocess.run(["git", "-C", dst, "tag", bump(pkv)],
                                      capture_output=True)),
+    # ⚑ The control has to CREATE the offending shape, because the defect is a file
+    # that EXISTS, not a string that changed. No file-text mutation can express it,
+    # which is precisely why nothing caught the real one.
+    ("CHK-5", False, "add a binary doc no check can read",
+     lambda dst, pkv: io.open(os.path.join(dst, DOCDIR, "regression_probe.docx"),
+                              "wb").write(b"PK\x03\x04 not readable prose")),
     ("CHK-2T", None, "delete every tag (the clean-room condition)",
      lambda dst, pkv: [subprocess.run(["git", "-C", dst, "tag", "-d", tg],
                                       capture_output=True)

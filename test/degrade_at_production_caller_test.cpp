@@ -461,7 +461,7 @@ protected:
 // from `git show upstream/lyrical:nav2_costmap_2d/test/unit/zone_parameter_filter_test.cpp`,
 // with exactly two substitutions: the include, and the class under test.
 //
-// WHY (written before the act, OPS-070(B)):
+// WHY (written before the act):
 //   * upstream's suite drives `filter_->process(...)` directly and NEVER calls
 //     `updateCosts()` -- 0 occurrences in its 770 lines, and 0 in ALL SIX
 //     costmap-filter test files at `lyrical`. `CostmapFilter::updateCosts()`
@@ -680,7 +680,7 @@ TEST_F(TestZpf, HUBOT_D3_AFaultIsRetractedOnlyByASetThatComesBackSuccessful)
 // most likely to occur on a real robot.  Both tests below FAIL against the
 // committed source.  That is deliberate: they state the invariant the design
 // needs, and the code does not hold it yet.  A suite that cannot fail on the
-// real defect has measured nothing (CLAUDE.md §0).
+// real defect has measured nothing.
 //
 // HONEST BOUND: written on a host with NO ROS toolchain (`/opt/ros` absent,
 // no colcon, no ros2 — measured 2026-09-05).  These are NOT compiled and NOT

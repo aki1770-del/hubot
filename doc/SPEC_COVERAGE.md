@@ -147,7 +147,7 @@ because four figures about this package's tests were published simultaneously an
 agreed — `28 of 28`, `23 of 26`, `35 tests`, and a `46` that was in fact `colcon test-result
 --all` counting a different quantity without saying so.
 
-**DERIVED FROM THE TREE: 38 gtest cases in `test/*.cpp`, 9 CTest targets.**
+**DERIVED FROM THE TREE: 42 gtest cases in `test/*.cpp`, 10 CTest targets.**
 
 **These are counts of what EXISTS, not results.** A pass/fail figure is only meaningful with
 the tree it ran against, and the honest ones already carry it: *35/0/0/0 against `lyrical`

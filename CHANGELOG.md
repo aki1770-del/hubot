@@ -5,6 +5,34 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
 ## [Unreleased]
 
 ### Added
+- ⚑ **`test/namespaced_target_resolution_test.cpp` — the fixture that was recorded as
+  structurally impossible, and was not.** The relative-`node:` finding was measured only in a
+  real multi-process stack and written up as *"structurally invisible to every in-process
+  fixture, which hosts the target at root namespace where a relative name resolves correctly
+  BY ACCIDENT."* That sentence is true and was read as meaning the case needed a robot.
+  **It needed one line.** The variable is not where the TARGET lives — it is where the HOST
+  lives: put the filter's own node in `/local_costmap`, leave the target at the root exactly
+  where every other suite already puts it, and the accident is gone. Everything else keeps
+  working under the namespaced host for the reason that makes this a single-variable
+  experiment: the filter joins its own four topic names to the **parent** namespace, and the
+  parent of `/local_costmap` is the root, so info, mask and decision land byte-identically to
+  the un-namespaced fixtures. **Case A asserts the resolved client key and fails on the tree
+  before the join** (the key was the raw declared string); **case B asserts the set actually
+  arrives**; **C and D are a PAIR** differing in exactly one thing — whether anything exists at
+  the name — so removing the discrimination turns one of them red. Every case asserts the
+  namespace premise first, because a fixture whose namespace silently did not take would pass
+  all four for the wrong reason.
+- ⚑ **`prose_matches_tree.py` SC-11 — the operator sentences SC-9 was never reading.** SC-9
+  scans `publishDecision()`'s branch literals and nothing else. The `why` on a degraded target
+  is carried to the operator on the `event` field from three other functions, and the longest
+  and most directive sentence in the package — the one that says walk to this node, or do not
+  — was written **outside every oracle in that file on the day it was authored.** SC-11 applies
+  SC-9's rule to those three functions. It **refuses to pass on an unread surface**: if the
+  functions are renamed it reports that it could not be evaluated rather than green over
+  nothing. Its negative control mutates a literal that exists only inside
+  `describeUnansweredTarget()` — the anchoring lesson SC-9's own first control taught this file
+  — and was **watched going red**: 10/10 controls now pass.
+
 - **`test/prose_matches_tree.py` — the prose is now re-derived from the tree, and disagreeing
   fails.** Four figures about this package's own tests were published at once and no two agreed
   (`28 of 28`, `23 of 26`, `35 tests`, and a `46` that was `colcon test-result --all` counting a
@@ -20,7 +48,88 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
   at `cpp:648` rather than the code at `cpp:1268`. An oracle nobody has watched go red is not
   evidence that it can.
 
+### Removed
+- ⚑ **`doc/SPEC_COVERAGE.docx` — a tracked binary whose front page still said the package
+  would not build, five weeks of corrections after it did.** Measured by extracting
+  `word/document.xml` rather than searching the file: **1** occurrence of *"THE PACKAGE AS
+  COMMITTED WILL NOT BUILD, AND THIS IS THE HEADLINE"*, dated `2026-09-05`, and **0** of
+  `SUPERSEDED`, `IT BUILDS` or `2026-09-06` — while `doc/SPEC_COVERAGE.md:8` has carried
+  *"SUPERSEDED 2026-09-06. IT BUILDS"* since the day it became true. ⚑ **A text search over
+  a ZIP returns 0 for every pattern, which reads exactly like a clean file**, so an audit that
+  searched it as text cleared it: the conclusion was wrong and the warrant was absent
+  independently of the conclusion.
+  - **Its reach, measured rather than assumed:** `CMakeLists.txt:77-80` installs the target,
+    `include/` and `hubot_plugins.xml` and **not `doc/`** — so this never reached a consumer of
+    the built package. It reached **anyone who cloned**, which is the reader this repository is
+    about to acquire.
+  - **Dropped, not regenerated, and the choice was available** — `pandoc` is on the host. Three
+    measurements decided it: **nothing references it** (0 hits across every text format in the
+    tree), and at **5,426 characters against a 158-line markdown** it was never a copy but a
+    partial snapshot, so *"regenerate it faithfully"* has no defined target. And nothing would
+    stop it rotting again at the next edit of the markdown except a second oracle that extracts
+    and diffs a document with no named reader. **This is the second time in one day a citation
+    rotted because two copies of one document existed.** The markdown is the source of truth.
+  - ⚑ **The loom is not "regenerate it correctly once" — it is CHK-5, which makes the gate's
+    reach equal its claim.** `doc_files()` globs `.md` and nothing else, so every prose check
+    was blind to any other format while reporting green. CHK-5 refuses to let a document exist
+    under `doc/` that the gate cannot read. Its control has to **create** the offending file
+    rather than mutate a string, because the defect is a file that exists — which is exactly why
+    no text mutation ever caught the real one. **CHK-5 was watched going RED on the actual
+    `.docx` before it was removed**, not only on the synthetic control; 11/11 controls pass.
+
 ### Fixed
+- ⚑ **THE COMPONENT NAMED A HEALTHY NODE, AND ONLY HALF OF THAT IS FIXED BY THE NAMESPACE
+  JOIN. Measured before anything was changed, and the answer came back split.** The reported
+  instance — a relative `node:` under a namespaced costmap — **is closed.** Measured at nav2
+  tag `1.5.1`: `Layer::joinWithParentNamespace()` strips one level
+  (`node_namespace.substr(0, node_namespace.rfind("/"))`, `layer.cpp:90-93`, read at tag `1.5.1`), so from a filter
+  hosted by `/local_costmap/local_costmap` a relative `zpf_target_node` now resolves to
+  `/zpf_target_node` — the node that was reachable the whole time. Cases A and B of the new
+  suite hold that, and both fail on the tree before the join.
+  - ⚑ **The CLASS is not closed, and the fix opened a fresh instance of it.** "no answer within
+    Ns of the set being issued" describes a target that is present and did not reply. It was
+    also the sentence for a target that **does not exist at all**, and those are opposite
+    instructions to a person: one is a node to walk to, the other is a line of YAML to correct.
+    Nothing on the wire separated them — the finding says so itself, that only a pending-record
+    count of 7 versus 1 distinguished refused from never addressed. And a name that was
+    previously resolving *inside* the costmap's namespace and working now resolves one level up
+    and does not, producing the same misleading sentence from the opposite cause.
+  - **Closed in the value.** `describeUnansweredTarget()` asks the client whether a parameter
+    service is actually there and says which case this is, in the log **and** on `event`. When
+    the join moved the name, the sentence carries **both** spellings — the report says
+    `/zpf_target_node`, her YAML says `zpf_target_node`, and connecting those two is the whole
+    repair. ⚑ **It reports what it OBSERVED, never that the node is absent**: discovery is
+    asynchronous, and claiming absence would replace *names a healthy node* with *declares a
+    live node dead* — the same defect mirrored. Where two declared names resolve onto one
+    target the mapping is **erased rather than guessed**; naming the wrong YAML line is worse
+    than naming none.
+- ⚑ **OUR OWN ACCOUNT OF THAT DEFECT WAS BACKWARDS, IN THE SOURCE AND IN THIS FILE.** Both said
+  the relative name *"resolved against the root while our topics resolved against the parent."*
+  **That is refuted by its own evidence**: resolving `controller_server` against the root gives
+  `/controller_server`, which is the intended node, and there would have been no defect to fix.
+  Measured instead — rclcpp builds `<remote_node_name>/set_parameters`
+  (`parameter_client.cpp:74`) and hands that **relative** name to `rcl_node_resolve_name`
+  (`client.c:123`), which expands it against **the owning node's** namespace. It resolved
+  against the CHILD, not the root. The fix was right and the reason was wrong, **and a wrong
+  reason is how the next person rebuilds the defect.** Corrected in both places; the README's
+  description at `:228-231` was already correct and is untouched.
+- ⚑ **Three classes of citation a reader of this repository cannot follow.** A pointer to
+  `CLAUDE.md` — **a file that does not exist here** — in three test files; an internal rule
+  ordinal (`OPS-070(B)`) in five; an internal ordinal `V15` in three; an unattributable quote
+  from an unnamed authority in the source; and nine bare corpus numbers (`Vision 14`, `20`,
+  `77`, `9`). In every case **the sentence was self-contained and only the citation was
+  unfollowable**, so the sentence stays and the citation goes. Sakichi's principles are now
+  **quoted in full** where they are relied on rather than cited by a number, which is the rule
+  this project already applied to the document that ships outside the repository: *a citation
+  the reader cannot resolve is worse than none, because it looks resolved.* The three-letter
+  author tags in the comments are not deleted — they are the authorship record — but README now
+  says what they are and that **nothing outside this repository needs to be looked up.**
+- ⚑ **A test colour was stated as present tense in three documents and one of them did not
+  agree with itself.** `CMakeLists.txt` carried *"SC-1, SC-3 and SC-5 RED … 33 cases, 2
+  failures"* — **three named red, two counted** — and all three cases were worked on afterwards
+  with nothing coming back to update the comment. Each claim is now scoped to the run and tree
+  it measured. **No colour is asserted or retracted here**: that is a safety-oracle verdict and
+  belongs to FSE and to a run, not to the surface that quotes it.
 - ⚑ **`12.000000s` was reaching the operator, and it reached a tag that way.** `costmap_age` and
   `set_parameters_timeout` went through `std::to_string(double)`, which is `"%f"` — six decimals.
   It survived because **every internal quotation of the sentence tidies the float away**
@@ -83,15 +192,16 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
   the sentence under which a defect survives a sweep.
 
 ### Fixed
-- ⚑ **The message promised the human more currency than the robot's own doubt allowed.** At the shipped defaults `zone_decision` declared `valid_for_s: 2.5` (`liveness_period x 2.5`) while the filter called its own reading stale at `costmap_silence_timeout: 2.0` — a half-second in which a consumer honouring the declared expiry acted on a claim the publisher had already disowned, and with no ceiling on either parameter, `liveness_period: 30` yielded a 75-second-old enforcement claim a consumer was instructed to believe. **The sixth generation of the reassuring-value family: yes-past-my-own-doubt.** `valid_for_s` and the offered `DEADLINE` are now one number from one function, `declaredValidForS()`, clamped to `costmap_silence_timeout` while that detector is on (with it off, the fallback silence budget already equals `liveness_period x 2.5`, so they are equal by construction). Fixed in the value; SC-3 stays as written and is green on both substrates.
-  - ⚑ **A wrong configuration is made visible, never silently corrected (V15):** when the clamp bites, one warning at startup names both numbers and the clamped value. **The shipped defaults trip it.** That is a value decision about the defaults, recorded here rather than hidden by quietly moving one.
+- ⚑ **The message promised the human more currency than the robot's own doubt allowed.** At the shipped defaults `zone_decision` declared `valid_for_s: 2.5` (`liveness_period x 2.5`) while the filter called its own reading stale at `costmap_silence_timeout: 2.0` — a half-second in which a consumer honouring the declared expiry acted on a claim the publisher had already disowned, and with no ceiling on either parameter, `liveness_period: 30` yielded a 75-second-old enforcement claim a consumer was instructed to believe. **The sixth generation of the reassuring-value family: yes-past-my-own-doubt.** `valid_for_s` and the offered `DEADLINE` are now one number from one function, `declaredValidForS()`, clamped to `costmap_silence_timeout` while that detector is on (with it off, the fallback silence budget already equals `liveness_period x 2.5`, so they are equal by construction). Fixed in the value, and SC-3 was left exactly as written rather than relaxed to meet the code.
+  - ⚑ **THIS ENTRY AND THE PHASE-B ENTRY BELOW CONTRADICTED EACH OTHER ON SC-3, INSIDE THIS ONE FILE.** This entry said SC-3 was *"green on both substrates"*; the Phase-B entry below lists SC-3 among three cases that do **not** pass against release `1.5.1`. **Both were true of the tree each measured, and neither said which tree that was** — the Phase-B count was taken before the fix recorded here landed, and nothing re-derived it afterwards. Both are now scoped to their own measurement. ⚑ **The colour of SC-3 is not settled here and is not CPP's to settle**: it is a safety-oracle verdict and belongs to FSE and to a run. What CPP can state is the bound — `colcon` cannot run on the host these words were written on, so no arm of this was executed by their author. A clean-room run of commit `4bfd2cd` was **reported** to CPP as `47 tests, 0 errors, 0 failures, 2 skipped`; CPP did not run it, cites it as relayed rather than measured, and notes only that a skip count of 2 is consistent with the two pluginlib cases that `GTEST_SKIP()` on a release. **Three documents on this tree carried a colour for SC-3 and the third — a comment in `CMakeLists.txt` — did not agree with itself.**
+  - ⚑ **A wrong configuration is made visible, never silently corrected:** when the clamp bites, one warning at startup names both numbers and the clamped value. **The shipped defaults trip it.** That is a value decision about the defaults, recorded here rather than hidden by quietly moving one.
 - ⚑ **Two pluginlib cases skip with the reason on a release, and the suite gains the case it lacked.** `A_PluginlibResolvesAndInstantiatesTheClass` and `C_NegativeControl_UpstreamFilterEscapesUpdateMap` discriminate this package against **upstream's** `nav2_costmap_2d::ZoneParameterFilter`, loaded by pluginlib name. A released nav2 does not ship it — measured at tag `1.5.1`: declared by nothing on the install — so on a release those cases have no control. They now `GTEST_SKIP()` with exactly that reason: a skip that says why, never a pass manufactured by the absence of the thing under test. B still runs there; the skip is the record that its control did not.
   - **New: `A0_PluginlibResolvesHubotsOwnClassOnThisSubstrate`** — loads `hubot::ZoneParameterFilter` through pluginlib with no upstream dependency, and must be green on every substrate the package claims. FBR's finding, verbatim: *"pluginlib loadability of hubot's own class on the release is UNVERIFIED by this suite. Yesterday's dlopen is not pluginlib."* Case A asserted the same load but aborted on its upstream arm before that assertion could report.
 - ⚑ **This package now builds against a RELEASED nav2.** For a day it could not, and every surface said so: the source imported `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, a symbol on branches `main`/`lyrical` and in no release tag. **Measured 2026-09-06 (Phase A): that symbol was the ONLY blocker, at eight sites — two in the library, six in tests — and the full nav2 dependency chain built from tag `1.5.1` with it substituted.** Three candidate second blockers — `nav2_ros_common`, `declare_or_get_parameter`, `joinWithParentNamespace` — were refuted by build, not by grep: all present at `1.5.1` and `1.5.0`.
   - **It was our copying mistake, not upstream's omission.** The value is a wire discriminator the integrator's own `costmap_filter_info_server` publishes from YAML; this filter only has to agree with it and never needed to obtain it from a header. It is now `hubot::kZoneParameterFilterType` (`include/hubot/zone_parameter_filter.hpp:64`), used at `src/zone_parameter_filter.cpp:238` and `:242` and in six test files.
   - ⚑ **The literal `4` from the Phase A probe did not ship.** Two `static_assert`s guard the value: `BINARY_FILTER + 1`, always on, fires on every nav2 if upstream renumbers its filters (`.hpp:68`); and a cross-check against `nav2_costmap_2d::ZONE_PARAMETER_FILTER` wherever CMake finds that symbol (`.hpp:79`). **Both fired on a mutated value, on both substrates, build exit 2** — release tripped the first, branch tripped both.
   - ⚑ **`__has_include` was the wrong tool, and it was CPP's own proposal.** `filter_values.hpp` exists on release AND on branch; only the branch defines the constant inside it, so a header probe guards nothing. CMake probes the SYMBOL (`check_cxx_source_compiles`, `CMakeLists.txt:61`) and defines `HUBOT_UPSTREAM_HAS_ZONE_PARAMETER_FILTER`; the configure log states which way it went.
-  - **Building is not passing, so both are stated.** Against release `1.5.1`: the library and every test binary build; **23 of 26 tests pass.** The three that do not: SC-3 (pre-existing, identical on branch), and `pluginlib_live_costmap_test` A and C, whose *upstream-comparison* arm loads `nav2_costmap_2d::ZoneParameterFilter` — a plugin that exists only on branch. **Our own plugin resolves and runs through a live `LayeredCostmap` on release** (B and B2 green). `1.5.0` was not built and is not claimed. RMW: `rmw_fastrtps_cpp`.
+  - **Building is not passing, so both are stated.** ⚑ **Measured at Phase A/B on 2026-09-06, BEFORE the fixes recorded above in this same release landed; the counts below describe that tree and were never re-derived.** Against release `1.5.1`: the library and every test binary build; **23 of 26 tests passed.** The three that do not: SC-3 (pre-existing, identical on branch), and `pluginlib_live_costmap_test` A and C, whose *upstream-comparison* arm loads `nav2_costmap_2d::ZoneParameterFilter` — a plugin that exists only on branch. **Our own plugin resolves and runs through a live `LayeredCostmap` on release** (B and B2 green). `1.5.0` was not built and is not claimed. RMW: `rmw_fastrtps_cpp`.
   - Reversed on every surface that said otherwise: the README install section (retitled in place, the one-line check kept, the compiler transcript kept as the record of what it was), the README deploy section, `package.xml`, `doc/SPEC_COVERAGE.md`, and the `[0.1.0]` note below. ⚑ `package.xml` was made unparseable **twice** today by a `--` inside an XML comment — the second time in a comment that replaced one warning against exactly that. Both repaired, both recorded.
 - ⚑ **Our own page told an integrator to use a mechanism our publisher made impossible.** `decision_pub_` was created with a bare `rclcpp::QoS(10)`, leaving the OFFERED deadline at the middleware default of infinity, while the README instructed the reader to request a finite `DEADLINE` QoS on their subscription. **`DEADLINE` is a Request/Offered policy and an offered infinity satisfies no finite request**, so a person who followed our written instruction got a subscription that never matched and received **nothing** — which reads as a broken topic, not as *nobody is watching*. Of everything found this week it is the only defect whose harm was specified in our own documentation. The publisher now offers `liveness_period x kValidForPeriods`.
   - **The number is not chosen to make a test pass.** It is byte-identical to the `valid_for_s` already in the payload, so the QoS promise and the message promise are one promise. It is keepable: the heartbeat publishes every `liveness_period` regardless of change, giving 2.5x headroom, so one late or dropped timer fire does not breach it — the same tolerance argument that justifies `kValidForPeriods` where it is defined.
@@ -201,7 +311,7 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
     control is only evidence if its description reproduces it.
 
 ### Changed
-- **Four dated self-corrections moved here from `README.md`.** A correction addressed to a reader of the previous page — of whom there are none outside the unit — is discipline for a reader who does not exist. The corrected statements stay on the page; what each used to say, and why it was wrong, lives here.
+- **Four dated self-corrections moved here from `README.md`.** A correction addressed to a reader of the previous page — of whom there are none outside this project — is discipline for a reader who does not exist. The corrected statements stay on the page; what each used to say, and why it was wrong, lives here.
   - *Not-current channel* — the page said the channel was *"closed to a derived filter three ways, measured on released `lyrical`"*. There is no released `lyrical`; it is a branch, and releases are tags. And the package's own header had already retracted "closed three ways": `Layer::setCurrent(bool)` is **public** (`layer.hpp:147`, in the `public:` region `:61`–`:181`), so the capability exists in the base class and is erased by statement order in the derived one, not by an architecture. The retracted sentence had been restated on the page in the same commit that corrected the header.
   - *Consumer rule* — it read *"refuse to drive on `enforced: NO` or `pending`"*: a blacklist, which cannot be complete and fails open — a consumer coded literally against those two strings would have read the new `unknown` as permission. It is a whitelist: proceed only on `enforced: yes`.
   - *Verified-against bound* — it read *"builds green against ROS `lyrical` with `nav2_costmap_2d` 1.5.1"*. The tree it was green against declared `<version>1.5.0</version>` and carried **six locally modified nav2 files** nothing warned about — `layered_costmap.hpp`/`.cpp`, `footprint_subscriber.hpp`/`.cpp` (26 lines), `keepout_filter.cpp` (7), `nav2_util/src/path_utils.cpp` (30), two of them the production caller's own class, in a directory that was not a git repository. Re-verified from a clean workspace against upstream `lyrical` HEAD `6f23b11c` with no local patches. ⚑ That same correction also said *"against released 1.5.1 it does not build at all"* — true when written, **superseded the same day** by the release-build entry under Fixed.

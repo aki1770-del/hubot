@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # hubot — SOTIF static safety invariants.  Author: FSE, 2026-09-05.
 #
-# ⚑ WHY THIS EXISTS, WRITTEN BEFORE THE ACT (OPS-070(B)).
+# ⚑ WHY THIS EXISTS, WRITTEN BEFORE THE ACT.
 #
 # hubot's central design decision is that it DEGRADES where upstream ABORTS.
 # Every existing test asks "can we prove it degrades?".  None asks whether the
@@ -34,11 +34,13 @@
 #      this file was written for, now named in README.md's install-blocker
 #      section, which is the one section a reader who cannot build will reach.
 #
-# Sakichi Vision 14, resolved this turn:
+# Sakichi's principles, quoted in full rather than cited by number: a
+# citation a reader of this repository cannot resolve would LOOK resolved,
+# which is worse than none.
 #   "Silent failure is the anti-Jidoka -- a function that returns a
 #    success-shaped value while the operation failed is a loom weaving through
 #    a broken warp."
-# Sakichi Vision 20, resolved this turn:
+# And:
 #   "Stopping must be cheap, or operators will hesitate; design the halt to
 #    cost less than the defect."
 #
@@ -151,8 +153,8 @@ inv_b() {
 # sets against a target that never answers."  If nothing references it, the
 # most likely field failure -- a target node that is dead, unstarted, or
 # misnamed -- produces a future that never becomes ready, no failure, no
-# latch, and `enforced: yes` forever.  Vision 14, in the one feature built to
-# abolish Vision 14.
+# latch, and `enforced: yes` forever.  A success-shaped value, inside the one
+# feature built to abolish success-shaped values.
 # ---------------------------------------------------------------------------
 #
 # ⚑ CPP 2026-09-05 (authored by CPP on FSE's gate, reported to FSE + CT, not
