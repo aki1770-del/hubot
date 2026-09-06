@@ -504,11 +504,35 @@ bare stamp is a **declared expiry**: every message carries `report_period_s` and
 `report_seq` advances on every publish so a frozen `/clock` cannot fake liveness. **That is
 strictly better than "check it". It is still something you must check.**
 
-**The complete answer lives in your process, not ours, and we have not built it:** a
-`DEADLINE` QoS on your subscription, or a `diagnostic_aggregator` staleness rule, raises the
-alarm in *your* node when ours goes quiet. ⚑ **NOT IMPLEMENTED HERE AND NOT MEASURED.**
-Naming it is not the same as having built it, and it is written here as a gap rather than
-offered as a feature.
+**The complete answer lives in your process, and a `DEADLINE` QoS on your subscription now
+works against this publisher** — it raises the alarm in *your* node when ours goes quiet,
+including the case this package cannot otherwise reach, the node dying with its last
+message left standing.
+
+**We offer a deadline of `liveness_period x 2.5` — the same number we publish as
+`valid_for_s`.** One promise, stated on two channels, so they cannot drift apart. At the
+default `liveness_period` of 1.0 s that is **2.5 s**.
+
+⚑ **The trap, and it is the opposite of what you would guess: `DEADLINE` is a
+Request/Offered policy, and the offered period must be *less than or equal to* the
+requested one. So you must request a deadline NO SHORTER than ours.** Request `2.5 s` or
+more at default settings and you match. Request `1.0 s` — a stricter, more cautious value —
+and the subscription **silently does not match and you receive nothing.** Set an
+`incompatible_qos_callback` on your subscription and you will be told; without one, an
+over-strict request is indistinguishable from a dead publisher.
+
+⚑ *Until 2026-09-06 this paragraph told you to use `DEADLINE` while the publisher was
+created with a bare `rclcpp::QoS(10)`, leaving the offered deadline at the middleware
+default of infinity. **An offered infinity satisfies no finite request**, so anyone who
+followed this instruction got a subscription that never matched and received nothing — our
+own documentation handing a person the exact silence this package exists to abolish. It is
+fixed rather than deleted, because the advice was right and the publisher was wrong.*
+
+⚑ **BOUND: measured on `rmw_fastrtps_cpp` only** (`test/sotif_gate_inertness_test.cpp`
+SC-5, two arms, the default-QoS control required to receive or the deadline arm proves
+nothing). QoS matching is RMW-dependent and this result does not generalise to your stack.
+**If `liveness_period <= 0` the heartbeat is off, no rate can honestly be promised, and no
+deadline is offered** — do not request one in that configuration.
 
 ## Lineage and licence
 

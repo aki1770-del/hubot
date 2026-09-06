@@ -150,8 +150,41 @@ void ZoneParameterFilter::initializeFilter(
   state_event_pub_->on_activate();
 
   // ⚑ HUBOT — the human-decision surface, created beside the robot's one.
+  //
+  // ⚑ THE OFFERED DEADLINE -- added 2026-09-06, and it is what makes the
+  // README's own recommended countermeasure possible instead of impossible.
+  // This was a bare `rclcpp::QoS(10)`, leaving the OFFERED deadline at the rmw
+  // default of infinity. DEADLINE is a Request/Offered policy: an offered
+  // infinity satisfies no finite request, so an integrator who followed our
+  // written advice -- "a DEADLINE QoS on your subscription" -- got a
+  // subscription that never matched and received NOTHING. Silence reads as a
+  // broken topic, not as "nobody is watching". A person following our
+  // instructions was handed the one observable we exist to abolish.
+  //
+  // THE NUMBER IS NOT CHOSEN TO PASS A TEST. It is `liveness_period_ *
+  // kValidForPeriods` -- byte-identical to the `valid_for_s` we already publish
+  // in the payload, so the promise on the QoS channel and the promise in the
+  // message are the same promise and cannot drift apart. It is a promise we can
+  // keep: the heartbeat publishes every `liveness_period_` whether or not
+  // anything changed, so we have 2.5x headroom and one late or dropped timer
+  // fire does not breach it -- the same tolerance argument that justifies
+  // kValidForPeriods at its definition. If the node dies, the deadline is
+  // missed, which is precisely the alarm the consumer wants and the case this
+  // package documents itself as unable to reach.
+  //
+  // ⚑ AND IT IS OFFERED ONLY WHEN WE CAN KEEP IT. With `liveness_period <= 0`
+  // the heartbeat is disabled and nothing publishes periodically, so there is
+  // no rate we could honestly promise; the deadline is then left unset rather
+  // than manufacturing a breach the middleware would report forever. A
+  // publisher that offers a deadline it cannot meet has traded a silent failure
+  // for a permanent false alarm.
+  rclcpp::QoS decision_qos(10);
+  if (liveness_period_ > 0.0) {
+    decision_qos.deadline(
+      rclcpp::Duration::from_seconds(liveness_period_ * kValidForPeriods));
+  }
   decision_pub_ = node->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
-    joinWithParentNamespace(decision_topic_), rclcpp::QoS(10));
+    joinWithParentNamespace(decision_topic_), decision_qos);
   decision_pub_->on_activate();
 
   loadStateConfig();

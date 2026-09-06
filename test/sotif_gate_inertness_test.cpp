@@ -152,8 +152,8 @@ nav_msgs::msg::OccupancyGrid make_mask(uint32_t w, uint32_t h, int8_t fill_value
 class InfoPublisher : public rclcpp::Node
 {
 public:
-  InfoPublisher()
-  : Node("sotif_info_pub")
+  explicit InfoPublisher(const std::string & ns = "")
+  : Node("sotif_info_pub", ns)
   {
     publisher_ = create_publisher<nav2_msgs::msg::CostmapFilterInfo>(
       kInfoTopic, rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
@@ -173,8 +173,8 @@ private:
 class MaskPublisher : public rclcpp::Node
 {
 public:
-  explicit MaskPublisher(const nav_msgs::msg::OccupancyGrid & mask)
-  : Node("sotif_mask_pub")
+  MaskPublisher(const nav_msgs::msg::OccupancyGrid & mask, const std::string & ns = "")
+  : Node("sotif_mask_pub", ns)
   {
     publisher_ = create_publisher<nav_msgs::msg::OccupancyGrid>(
       kMaskTopic, rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
@@ -191,8 +191,8 @@ private:
 class TargetNode : public rclcpp::Node
 {
 public:
-  TargetNode()
-  : Node("sotif_target_node")
+  explicit TargetNode(const std::string & ns = "")
+  : Node("sotif_target_node", ns)
   {
     declare_parameter("speed", 1.0);
   }
@@ -209,8 +209,8 @@ public:
     std::string message;
   };
 
-  DecisionRecorder()
-  : Node("sotif_decision_recorder")
+  explicit DecisionRecorder(const std::string & ns = "")
+  : Node("sotif_decision_recorder", ns)
   {
     subscriber_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
       "zone_decision", rclcpp::QoS(200),
@@ -279,7 +279,10 @@ protected:
 
   /// `silence_timeout <= 0` is the DOCUMENTED disable (README:440). It is the
   /// configuration under test, not an abuse of the interface.
-  bool build(double liveness_period, double silence_timeout, int8_t mask_fill = kZoneCell)
+  bool build(
+    double liveness_period, double silence_timeout, int8_t mask_fill = kZoneCell,
+    const std::string & host_ns = "", const std::string & target_ns = "",
+    const std::string & topic_ns = "")
   {
     std::vector<rclcpp::Parameter> cfg = {
       rclcpp::Parameter(fp("filter_info_topic"), std::string(kInfoTopic)),
@@ -299,9 +302,9 @@ protected:
     rclcpp::NodeOptions opts;
     opts.parameter_overrides(cfg);
 
-    target_node_ = std::make_shared<TargetNode>();
-    node_ = std::make_shared<nav2::LifecycleNode>("sotif_host", opts);
-    recorder_ = std::make_shared<DecisionRecorder>();
+    target_node_ = std::make_shared<TargetNode>(target_ns);
+    node_ = std::make_shared<nav2::LifecycleNode>("sotif_host", host_ns, opts);
+    recorder_ = std::make_shared<DecisionRecorder>(topic_ns);
 
     layers_ = std::make_shared<nav2_costmap_2d::LayeredCostmap>("map", false, false);
     tf_buffer_ = nav2::create_transform_buffer(node_);
@@ -311,8 +314,8 @@ protected:
     filter_->initialize(layers_.get(), kFilterName, tf_buffer_.get(), node_, nullptr);
     filter_->initializeFilter(kInfoTopic);
 
-    info_pub_ = std::make_shared<InfoPublisher>();
-    mask_pub_ = std::make_shared<MaskPublisher>(make_mask(4, 4, mask_fill));
+    info_pub_ = std::make_shared<InfoPublisher>(topic_ns);
+    mask_pub_ = std::make_shared<MaskPublisher>(make_mask(4, 4, mask_fill), topic_ns);
 
     startSpinning();
 
@@ -407,8 +410,29 @@ TEST_F(SotifGateInertness, SC1_ADisabledSilenceDetectorMustNotReportSafety)
   // already covers.
   driveUntilConfirmed(1500ms);
 
-  const size_t m = recorder_->mark();
-  std::this_thread::sleep_for(1500ms);   // the costmap is now stopped
+  // ⚑ AMENDED 2026-09-06, AGAINST THIS CASE'S OWN AUTHOR.
+  //
+  // The first version marked the instant the costmap stopped and asserted over
+  // EVERY sample after it. That demanded the verdict flip INSTANTLY -- which
+  // contradicts the entire reason a budget exists, and would have made the case
+  // fail against a CORRECT implementation on the first sample or two, while the
+  // age is still inside any sane budget and `watching: yes` is the right answer.
+  //
+  // A build seat measured exactly that and concluded the case was UNSATISFIABLE.
+  // ⚑ IT IS NOT, AND THE CORRECTION RUNS AGAINST BOTH OF US. The defect was in
+  // the assertion WINDOW, not in the property: the property this case is about
+  // is CONVERGENCE -- a filter nothing is driving must ARRIVE at not-watching --
+  // never instantaneity. So the window now opens AFTER any plausible budget has
+  // elapsed, and the case asks the question it always meant to ask.
+  //
+  // ⚑ AND IT MUST STILL BE RED ON CURRENT SOURCE, or the amendment has destroyed
+  // the oracle rather than fixed it. With `costmap_silence_timeout <= 0`,
+  // `costmap_silent_` can never become true at ANY age, so the converged window
+  // still reports `watching: yes` and this case still fails. Verified by running
+  // it, not by reasoning about it.
+  std::this_thread::sleep_for(1200ms);   // costmap stopped; let a budget elapse
+  const size_t m = recorder_->mark();    // ⚑ mark AFTER convergence, not before
+  std::this_thread::sleep_for(600ms);
   const auto samples = recorder_->since(m);
 
   ASSERT_FALSE(samples.empty())
@@ -660,6 +684,84 @@ TEST_F(SotifGateInertness, SC6_Tripwire_TheFilterCannotTellTheStackItIsNotCurren
        "Layer::isCurrent(), the channel nav2 reads. That is good news and it "
        "makes AoU-S1 WRONG -- rewrite it, and tell integrators the stack can "
        "see this after all. Do not 'fix' this test.";
+}
+
+// ===========================================================================
+// SC-7 — ⚑ DOES THE NAMESPACE JOIN ACTUALLY *DELIVER*, OR IS IT ONLY
+// NON-BREAKING? THIS IS THE ONLY CASE IN THE PACKAGE THAT CAN TELL.
+//
+// `src/zone_parameter_filter.cpp:292` applies `joinWithParentNamespace()` to the
+// INTEGRATOR's `node:` field -- the loom we had applied to all four of our own
+// topic names and to none of theirs. It closes the phantom-client defect the
+// live stack found.
+//
+// ⚑ BUT EVERY OTHER TEST IN THIS PACKAGE RUNS AT ROOT NAMESPACE, WHERE A JOINED
+// AND AN UNJOINED NAME RESOLVE IDENTICALLY. Measured 2026-09-06: `test/` and
+// `hubot_live_stack/src/` contain ZERO ROS namespace configuration -- every
+// occurrence of the word is a C++ `namespace` block. So the fix was verified as
+// NON-BREAKING and never verified as DELIVERING.
+//
+// ⚑ THAT DISTINCTION IS THE POINT. A loom that looks shared and is not
+// delivering is worse than one openly withheld: it removes the visible gap and
+// leaves the integrator exactly where they were. It is this package's own
+// PI-CLASS -- a success-shaped value -- moved to the delivery layer.
+//
+// So: host node in `/probe_ns`, target node in `/probe_ns`, and a RELATIVE
+// `node: sotif_target_node` in the configuration. If the join delivers, the set
+// reaches a real node and `enforced` reaches `yes`. GREEN here is the fix
+// DELIVERING, not merely not breaking.
+// ===========================================================================
+TEST_F(SotifGateInertness, SC7_TheNamespaceJoinDeliversAndNotMerelyDoesNoHarm)
+{
+  ASSERT_TRUE(
+    build(
+      /*liveness_period=*/0.1, /*silence_timeout=*/2.0, kZoneCell,
+      /*host_ns=*/"robot1/local_costmap", /*target_ns=*/"robot1",
+      /*topic_ns=*/"robot1"));
+
+  driveUntilConfirmed(2500ms);
+
+  const auto samples = recorder_->since(0);
+  ASSERT_FALSE(samples.empty()) << "nothing published -- the case proves nothing";
+
+  bool delivered = false;
+  for (const auto & s : samples) {
+    if (get(s, "enforced") == "yes") {delivered = true;}
+  }
+  EXPECT_TRUE(delivered)
+    << "under a NAMESPACED launch, a relative `node:` never reached its target -- "
+       "the join at zone_parameter_filter.cpp:292 does not deliver. last sample: "
+    << render(samples.back());
+}
+
+// ===========================================================================
+// SC-8 — NEGATIVE CONTROL FOR SC-7, and without it SC-7 proves nothing.
+//
+// Same namespaced host, but the target node is left at ROOT. A join that works
+// must now MISS it -- the client addresses `/probe_ns/sotif_target_node` and
+// nothing serves that. If this arm also reached `yes`, SC-7's green would mean
+// only that the name resolves somewhere, not that the join is what carried it.
+//
+// ⚑ Expected: `NO` after the set_parameters deadline.
+// ===========================================================================
+TEST_F(SotifGateInertness, SC8_NegativeControl_ARootTargetIsNotReachedFromANamespacedHost)
+{
+  ASSERT_TRUE(
+    build(
+      /*liveness_period=*/0.1, /*silence_timeout=*/2.0, kZoneCell,
+      /*host_ns=*/"robot1/local_costmap", /*target_ns=*/"",
+      /*topic_ns=*/"robot1"));
+
+  driveUntilConfirmed(2500ms);
+
+  const auto samples = recorder_->since(0);
+  ASSERT_FALSE(samples.empty());
+
+  const auto & last = samples.back();
+  EXPECT_NE(get(last, "enforced"), "yes")
+    << "a target sitting at ROOT was reported as enforced from a host in "
+       "/probe_ns -- the join is not addressing what it claims to, and SC-7's "
+       "green would then prove nothing: " << render(last);
 }
 
 int main(int argc, char ** argv)
