@@ -26,6 +26,39 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
   the sentence under which a defect survives a sweep.
 
 ### Fixed
+- ⚑ **Two dependencies were `REQUIRED` by the build and declared in no manifest.**
+  `nav2_util` and `nav2_ros_common` are both `find_package(... REQUIRED)` (`CMakeLists.txt:20`,
+  `:21`) and both linked as exported targets (`:36`, `:37`, `:62`, `:63`), while
+  `grep -c nav2_util package.xml` and `grep -c nav2_ros_common package.xml` **both returned 0**.
+  `rosdep install --from-paths` installed neither, so the first thing a stranger saw was a
+  configure error naming a package this manifest never mentioned. Both are now declared.
+- ⚑ **Fifteen stale source line-numbers across four files — every prose citation in the package
+  was wrong.** The source moved twice on 2026-09-06 and no citation followed it. Re-measured
+  against the committed source and corrected: `ZONE_PARAMETER_FILTER` `:119`/`:123` → **`:198`/
+  `:202`** (`README.md` ×2 sites, `CHANGELOG.md`, `package.xml`, `doc/SPEC_COVERAGE.md` ×2);
+  the `nominal_defaults` string-array and child reads `:257`/`:260` → **`:337`/`:339`**; the three
+  `Failed to lock node` throws `:48`/`:103`/`:172` → **`:78`/`:182`/`:251`**. ⚑ **`:48` had
+  drifted onto a doc-comment line and `:257` onto an unrelated `target_node` read** — a citation
+  that lands on plausible-looking code is worse than one that lands on nothing, because it
+  survives a reader's spot-check.
+  - ⚑ **The two pasted compiler transcripts were NOT renumbered, and that is deliberate.**
+    Rewriting a line number inside a recorded tool output manufactures a transcript no compiler
+    ever emitted. They are labelled instead with the commit that produces them — **hubot
+    `f08bb1c`**, where the constant did sit at `:119` — so they are reproducible rather than
+    merely disclaimed.
+- ⚑ **The one gate written to run WITHOUT a toolchain was reachable only by HAVING the
+  toolchain.** `test/safety_invariants_static.sh` states on its own face that it is deliberately
+  toolchain-free because the behavioural suite cannot run without ROS and *"the suite did not
+  run" reads exactly like "the suite passed."* Its only invocation was `add_test` at
+  `CMakeLists.txt:133`, downstream of sixteen `find_package(... REQUIRED)` calls. **Measured
+  2026-09-06 on a ROS-free host: cmake aborts at `CMakeLists.txt:14` — the first one, 119 lines
+  above the registration — and writes no `CTestTestfile.cmake` at all**, so the gate was never
+  registered, not merely skipped. The script also *claimed* `"This gate always runs, everywhere"`;
+  it could, and it did not. The false sentence is corrected in place rather than deleted, the
+  registration is kept for regression visibility, and the toolchain-free lane
+  (`bash test/safety_invariants_static.sh .`) is now named in the README's install-blocker
+  section — the one section a reader who cannot build is guaranteed to reach.
+  **Verified this turn: 12/12 deterministic green, 6 invariants, no ROS on the host.**
 - ⚑ **The package invited an install it cannot deliver, and the disqualifying fact was 220 lines
   below the invitation.** The README's `find_package(hubot REQUIRED)` block sat near the top with
   nothing between it and a reader; the release gap was recorded honestly, but in the bounds
@@ -76,8 +109,16 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
   probe runs). ⚑ **The failure mode was inverted** — the more obviously the invariant held, the
   likelier it was reported violated. Both sites now count with `grep -c`, which consumes its
   input. **20/20 green on the true source; 5/5 red against each of two mutants** (one removing
-  the only code reference to `kMaxPendingSets`, one removing `pending_sets_.clear()`). It is now
+  **both** code references to `kMaxPendingSets`, one removing `pending_sets_.clear()`). It is now
   registered with CTest, so it runs in `colcon test`.
+  - ⚑ **Corrected 2026-09-06: that read *"the only code reference"* and there are TWO** — the
+    guard clause at `src/zone_parameter_filter.cpp:744` and the message at `:749`. The count was
+    already 2 at `030bd4d`, the commit that introduced the sentence, so it was **wrong when
+    written, not merely stale**. It is corrected rather than deleted because the error is
+    load-bearing on the control itself: **a mutant that removes only one of the two leaves INV-C
+    GREEN — measured this turn** — so a reader reproducing the recorded control from its own
+    description would have got a passing mutant and concluded the gate was blind. A negative
+    control is only evidence if its description reproduces it.
 
 ### Changed
 - `valid_for_s`'s `2.5` factor is now a named constant with its justification, and the README
@@ -180,7 +221,7 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
 ### Known limitations
 See **Read this before you deploy it** in `README.md`. In particular:
 
-- ⚑ **This does not build against a released nav2.** `src/zone_parameter_filter.cpp:119`
+- ⚑ **This does not build against a released nav2.** `src/zone_parameter_filter.cpp:198`
   needs `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, which is absent from tags `1.5.0` and
   `1.5.1` and present only on branches `main` and `lyrical`. Measured 2026-09-06 against
   tag `1.5.1` (`a6354f3f`) from a clean workspace: compile error. Verified to build and

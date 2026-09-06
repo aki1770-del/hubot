@@ -37,14 +37,21 @@ a limit is still only *requested* and not yet in force.**
 
 ## ⚑ YOU CANNOT INSTALL THIS TODAY. Read this before the instructions below.
 
-**No released `nav2_costmap_2d` can build this package.** `src/zone_parameter_filter.cpp:119`
-and `:123` name `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, a `uint8_t` constant carried on the
+**No released `nav2_costmap_2d` can build this package.** `src/zone_parameter_filter.cpp:198`
+and `:202` name `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, a `uint8_t` constant carried on the
 `main` and `lyrical` **branches** and in **no release**. Against tag `1.5.1`, from a clean
 workspace, the compiler says so on the first file:
 
 ```
 src/zone_parameter_filter.cpp:119:37: error: 'ZONE_PARAMETER_FILTER' is not a member of 'nav2_costmap_2d'
 ```
+
+⚑ *That block is a **verbatim compiler transcript, kept unedited**. Its `:119` is where the
+constant sat in **hubot `f08bb1c`**, the commit the build was actually run against; the source
+has moved twice since and the same use is now at `:198` and `:202`. The number is deliberately
+**not** corrected in place: rewriting a line number inside a recorded tool output would
+manufacture a transcript no compiler ever emitted. To reproduce it exactly, build `f08bb1c`
+against tag `1.5.1`.*
 
 **Do not take our word for it — check your own installation:**
 
@@ -69,6 +76,28 @@ not made yet.
 
 **Everything below describes a package you cannot yet install.** It is accurate about what the
 filter does and how it is configured; it is aspirational about your getting it.
+
+### One thing you CAN run today, with no toolchain at all
+
+The behavioural suite needs colcon, nav2, rclcpp and a live executor, so on the host you are
+almost certainly reading this from it cannot run — and **"the suite did not run" reads exactly
+like "the suite passed."** The static safety gate is written for precisely that host. It is
+bash, grep and awk, it needs nothing installed, and it finishes in under a second:
+
+```
+bash test/safety_invariants_static.sh .
+```
+
+Six invariants over the committed source; exit `0` if all hold, `1` if any is violated, and
+each failure line names the file position that refutes it. **It proves the shape of the source,
+never the behaviour of the robot** — it is a sound partial, not a substitute for the suite.
+
+⚑ *This line exists because the gate was reachable only through `colcon test`, where it is
+registered at `CMakeLists.txt:133` — downstream of sixteen `find_package(... REQUIRED)` calls.
+Measured 2026-09-06 on a ROS-free host: `cmake` aborts at `CMakeLists.txt:14`, the very first
+one, 119 lines before the registration, and writes no `CTestTestfile.cmake` at all. **The one
+gate built to run without a toolchain was reachable only by having the toolchain**, and nothing
+on any surface told you the command above existed.*
 
 ---
 
@@ -160,8 +189,8 @@ every zone* — that is when `nominal_defaults` is restored.
 >
 > **1. `nominal_defaults` cannot be written as nested YAML, and we do not yet have a
 > form that is proven to load.** The filter reads `<filter>.nominal_defaults` as a
-> **string array** (`src/zone_parameter_filter.cpp:257`) and also reads
-> `<filter>.nominal_defaults.<name>.node` as children of that same key (`:260`). In a
+> **string array** (`src/zone_parameter_filter.cpp:337`) and also reads
+> `<filter>.nominal_defaults.<name>.node` as children of that same key (`:339`). In a
 > ROS 2 parameter file one key cannot be both a sequence and a mapping. The dotted
 > form printed above is written the only way the two can coexist in one document, and
 > **whether the parameter loader accepts it is untested.** Until it is, set those
@@ -221,8 +250,8 @@ keeps ticking. On that path nothing is swallowed and nothing takes the node down
 
 ⚑ **Scoped 2026-09-06; it used to be unqualified.** Three
 `throw std::runtime_error{"Failed to lock node"}` remain, at
-`src/zone_parameter_filter.cpp:48` (`initializeFilter`), `:103` (`filterInfoCallback`) and
-`:172` (`loadStateConfig`). None is on the `process()` / `updateCosts()` path that this
+`src/zone_parameter_filter.cpp:78` (`initializeFilter`), `:182` (`filterInfoCallback`) and
+`:251` (`loadStateConfig`). None is on the `process()` / `updateCosts()` path that this
 package is about, and the upstream filter carries the same three — but nothing above them
 handles an exception either, so "nothing takes the node down" was more than we had shown.
 
@@ -290,13 +319,17 @@ one.
 
 **⚑ THIS DOES NOT BUILD AGAINST A RELEASED nav2. Check yours before you plan on it.**
 
-`src/zone_parameter_filter.cpp:119` and `:123` use `nav2_costmap_2d::ZONE_PARAMETER_FILTER`.
+`src/zone_parameter_filter.cpp:198` and `:202` use `nav2_costmap_2d::ZONE_PARAMETER_FILTER`.
 That constant is **absent from every nav2 release**. Measured 2026-09-06 by building this
 package against upstream tag `1.5.1` (commit `a6354f3f`), from a clean workspace:
 
 ```
 src/zone_parameter_filter.cpp:119:37: error: 'ZONE_PARAMETER_FILTER' is not a member of 'nav2_costmap_2d'
 ```
+
+⚑ *Verbatim transcript, kept unedited. Its `:119` is hubot `f08bb1c`, the commit built; the
+same use is now at `:198`. See the note in the install-blocker section above for why the
+number inside a recorded tool output is not rewritten.*
 
 Absent from tag `1.5.0` and tag `1.5.1`; present on branches `main` and `lyrical`. **So today
 this package installs only on a nav2 branch HEAD.** Whether anything else also blocks a release

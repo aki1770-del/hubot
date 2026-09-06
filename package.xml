@@ -20,7 +20,7 @@
        `<depend>nav2_costmap_2d</depend>` below carries NO version bound, which
        reads as a claim of compatibility with every nav2_costmap_2d. It is not one.
        Measured 2026-09-06: this package does NOT compile against released nav2
-       1.5.0 or 1.5.1 — src/zone_parameter_filter.cpp:119 needs
+       1.5.0 or 1.5.1 — src/zone_parameter_filter.cpp:198 needs
        nav2_costmap_2d::ZONE_PARAMETER_FILTER, which exists only on branches
        `main` and `lyrical`, in no release tag.
        ⚑ AND THE MANIFEST CANNOT EXPRESS THE REAL CONSTRAINT: version_gte/version_lt
@@ -33,6 +33,18 @@
   <depend>pluginlib</depend>
   <depend>nav2_costmap_2d</depend>
   <depend>nav2_msgs</depend>
+  <!-- ⚑ ADDED 2026-09-06 (CPP). Both were `find_package(... REQUIRED)` in
+       CMakeLists.txt (:20, :21) and linked as exported targets (:36, :37, :62,
+       :63) while appearing in NEITHER manifest: `grep -c nav2_util package.xml`
+       and `grep -c nav2_ros_common package.xml` both returned 0. A stranger's
+       `rosdep install` over this path therefore installed neither, and the first
+       thing a stranger saw was a configure error naming a package this manifest
+       never mentioned. The manifest must declare what the build file requires.
+       (Written without a double hyphen on purpose: XML forbids one inside a
+       comment, and the first draft of this note used the flag's real spelling
+       and made package.xml unparseable.) -->
+  <depend>nav2_util</depend>
+  <depend>nav2_ros_common</depend>
   <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
   <depend>diagnostic_msgs</depend>

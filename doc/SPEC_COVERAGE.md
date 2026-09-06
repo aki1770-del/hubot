@@ -32,7 +32,7 @@ a source from another — was resolved by choosing one, as it said it must be.
 
 **The build bound that DOES stand, and it is a different one:** this package compiles against
 nav2 branch HEAD (`main` or `lyrical`) and **NOT against any released nav2** — `1.5.0` or
-`1.5.1` — because `src/zone_parameter_filter.cpp:119` needs
+`1.5.1` — because `src/zone_parameter_filter.cpp:198` needs
 `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, which is in no release tag. That bound is on
 `package.xml`, `README.md` and `CHANGELOG.md`, and it is unchanged by this correction.
 
@@ -42,7 +42,7 @@ nav2 branch HEAD (`main` or `lyrical`) and **NOT against any released nav2** —
 
 | specification | state | FIT / GAP |
 |---|---|---|
-| out-of-tree ROS 2 package installable without an upstream merge | ⚑ **CORRECTED 2026-09-06.** The `ament_cmake` layout and `pluginlib` export are present and correct — **but they were the wrong evidence for this row.** A plugin export says nothing about whether the translation unit compiles, and it does not, against any release: `src/zone_parameter_filter.cpp:119` needs `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, absent from every release tag. The row asked whether an integrator can install it and was answered with whether we packaged it. | ⚑ **GAP** — was **FIT** |
+| out-of-tree ROS 2 package installable without an upstream merge | ⚑ **CORRECTED 2026-09-06.** The `ament_cmake` layout and `pluginlib` export are present and correct — **but they were the wrong evidence for this row.** A plugin export says nothing about whether the translation unit compiles, and it does not, against any release: `src/zone_parameter_filter.cpp:198` needs `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, absent from every release tag. The row asked whether an integrator can install it and was answered with whether we packaged it. | ⚑ **GAP** — was **FIT** |
 | licence clean | Apache-2.0; the upstream file's own header reads `Copyright (c) 2026 Komada (aki1770-del)` — we are the holder | **FIT** |
 | reachable by an integrator | nothing is published; repo is local only | **GAP** — a publish is Chair-only |
 | C++ estate | this is our first C++ repository; measured, we owned zero | **FIT**, newly |

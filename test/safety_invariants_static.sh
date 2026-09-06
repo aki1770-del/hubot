@@ -14,7 +14,25 @@
 # needs colcon, nav2, rclcpp, a live executor and a second node, so on any host
 # without ROS it cannot run at all -- and "the suite did not run" reads exactly
 # like "the suite passed" (MEMORY 2026-08-20: an absent verdict reads as a
-# pass).  This gate always runs, everywhere, in under a second.
+# pass).  It runs anywhere, in under a second, with nothing installed.
+#
+# ⚑ THAT SENTENCE READ "This gate always runs, everywhere, in under a second"
+# until 2026-09-06, and it was FALSE -- corrected here rather than deleted,
+# because the gap it hid is the reason the second invocation path now exists.
+# CAN-run and DOES-run are different claims and this file asserted the second on
+# the evidence of the first.  Until today the only thing that invoked this script
+# was `add_test` at CMakeLists.txt:133, which sits downstream of sixteen
+# `find_package(... REQUIRED)` calls.  Measured on a ROS-free host: cmake aborts
+# at CMakeLists.txt:14 -- the FIRST find_package, 119 lines above the
+# registration -- and never writes a CTestTestfile.cmake, so the test is not
+# merely skipped, it is never registered.  The one gate written to survive the
+# absence of the toolchain was reachable only by having the toolchain.
+#
+# It now has two lanes, and neither is the other's fallback:
+#   1. `colcon test`  -- regression visibility where the suite already runs.
+#   2. `bash test/safety_invariants_static.sh .`  -- the toolchain-free lane
+#      this file was written for, now named in README.md's install-blocker
+#      section, which is the one section a reader who cannot build will reach.
 #
 # Sakichi Vision 14, resolved this turn:
 #   "Silent failure is the anti-Jidoka -- a function that returns a

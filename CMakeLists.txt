@@ -121,6 +121,20 @@ if(BUILD_TESTING)
     test/maintainer_findings_test.cpp TIMEOUT 300)
   target_link_libraries(maintainer_findings_test ${hubot_test_deps})
 
+  # ⚑ THE SOTIF CLASS ORACLE (FSE, 2026-09-06). Every other suite here asserts
+  # an INSTANCE of the yes-when-nobody-is-watching family; this one asserts the
+  # PROPERTY over the liveness gate's configuration space, because a suite that
+  # adds one case per generation is always one generation behind. SC-1 and SC-3
+  # are PREDICTED RED on current source and have never been run — there is no
+  # ROS on the machine this was written on and no released nav2_costmap_2d
+  # carries ZONE_PARAMETER_FILTER, so the package cannot build at all today.
+  # ⚑ Wired here anyway, and deliberately: an unregistered test is a claim, not
+  # a feature — the defect this file recorded at :124 about the static lane.
+  # It must be RUN and its verdict recorded before any of it is believed.
+  ament_add_gtest(sotif_gate_inertness_test
+    test/sotif_gate_inertness_test.cpp TIMEOUT 300)
+  target_link_libraries(sotif_gate_inertness_test ${hubot_test_deps})
+
   # ⚑ THE STATIC INVARIANTS, WIRED IN 2026-09-06. It had been committed since
   # 2026-09-05 and referenced by NOTHING -- not this file, not a hook, not a
   # cron. It had therefore never fired, and when it was finally run by hand it
@@ -130,6 +144,17 @@ if(BUILD_TESTING)
   # nobody runs is not a guard, and a guard that is wrong half the time is worse
   # than none. Repaired, two-sided-controlled against two mutants, and now run
   # by `colcon test` where a regression is visible.
+  #
+  # ⚑ THIS REGISTRATION IS THE TOOLCHAIN-BOUND LANE, AND IT IS NOT THE ONLY ONE.
+  # The script is deliberately toolchain-free (bash+grep+awk) precisely so it can
+  # run where the behavioural suite cannot -- but this `add_test` is downstream of
+  # sixteen `find_package(... REQUIRED)` calls, so on a ROS-free host cmake aborts
+  # at :14 and never reaches this line: measured 2026-09-06, no CTestTestfile.cmake
+  # is written at all. Registering it here therefore gives regression visibility to
+  # people who already have ROS, and NOTHING to the host it was written for.
+  # The toolchain-free lane is `bash test/safety_invariants_static.sh <dir>`,
+  # documented in README.md where a reader who cannot build will actually reach it.
+  # Do not delete that line from the README on the grounds that this one exists.
   add_test(NAME safety_invariants_static
     COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test/safety_invariants_static.sh"
                  "${CMAKE_CURRENT_SOURCE_DIR}")
