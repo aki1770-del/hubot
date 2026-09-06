@@ -27,6 +27,11 @@ HONEST BOUNDS -- what this does NOT do, stated here rather than discovered later
   ("23 of 26 against tag 1.5.1") are legitimately different quantities measured on
   different trees, and this script does not adjudicate them. It requires that the tree's
   own counts appear correctly in exactly one place.
+* CHK-8 reads a NAMED list of directories (SHIP_DIRS) and nothing else. A new directory
+  that ships files and is installed by no rule is invisible to it, and the run still prints
+  GREEN -- the check is about three names, not about the tree. CHK-6 has the same shape for
+  XML (it reads XML_FILES, not every `.xml`); CHK-7 does not, because it walks SHIP_DIRS for
+  every `.yaml` under them.
 * CHK-4 catches phrasings this project RETIRED. It is not a general drift detector: a
   brand-new doc sentence that misdescribes the code passes. The retired list grows by one
   line each time an operator sentence is reworded.
@@ -474,10 +479,20 @@ def run_checks(root):
         installed_dirs.update(re.findall(r"[A-Za-z0-9_./]+", m.group(1)))
     missing = [d for d in SHIP_DIRS
                if os.path.isdir(os.path.join(root, d)) and d not in installed_dirs]
+    # ⚑ THE DETAIL LINE NAMES WHAT WAS CHECKED, NOT "everything". CHK-8 reads the
+    # NAMED list SHIP_DIRS and is blind to any other directory: add a `config/` and
+    # this check says nothing about it while still printing GREEN. Stated here and in
+    # the docstring because a coverage claim that overstates its reach is the defect
+    # class this whole package is about -- CHK-5 exists for the same reason one file
+    # over. The first draft of this line read "every shipped directory that exists",
+    # which is a claim about the tree; it is a claim about three names.
+    checked = [d for d in SHIP_DIRS if os.path.isdir(os.path.join(root, d))]
     res.append(("CHK-8", not missing,
                 "directory exists in the tree and NO install(DIRECTORY) rule ships it, so "
                 "ros2 launch cannot read it -> " + "; ".join(missing) if missing else
-                "every shipped directory that exists is named by an install() rule"))
+                "%d of the %d NAMED dirs exist and each is named by an install() rule "
+                "(%s); directories outside that list are not examined"
+                % (len(checked), len(SHIP_DIRS), ", ".join(checked))))
     return res
 
 
