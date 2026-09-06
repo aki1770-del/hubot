@@ -35,23 +35,34 @@ a limit is still only *requested* and not yet in force.**
 
 ---
 
-## ⚑ YOU CANNOT INSTALL THIS TODAY. Read this before the instructions below.
+## ⚑ IT BUILDS AGAINST A RELEASE NOW. It could not this morning — read this before the instructions below.
 
-**No released `nav2_costmap_2d` can build this package.** `src/zone_parameter_filter.cpp:198`
-and `:202` name `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, a `uint8_t` constant carried on the
-`main` and `lyrical` **branches** and in **no release**. Against tag `1.5.1`, from a clean
-workspace, the compiler says so on the first file:
+**Until 2026-09-06 no released `nav2_costmap_2d` could build this package, and this section said
+so in those words.** `src/zone_parameter_filter.cpp` named `nav2_costmap_2d::ZONE_PARAMETER_FILTER`,
+a `uint8_t` constant carried on the `main` and `lyrical` **branches** and in **no release**.
+Against tag `1.5.1`, from a clean workspace, the compiler said so on the first file:
 
 ```
 src/zone_parameter_filter.cpp:119:37: error: 'ZONE_PARAMETER_FILTER' is not a member of 'nav2_costmap_2d'
 ```
 
-⚑ *That block is a **verbatim compiler transcript, kept unedited**. Its `:119` is where the
-constant sat in **hubot `f08bb1c`**, the commit the build was actually run against; the source
-has moved twice since and the same use is now at `:198` and `:202`. The number is deliberately
-**not** corrected in place: rewriting a line number inside a recorded tool output would
-manufacture a transcript no compiler ever emitted. To reproduce it exactly, build `f08bb1c`
-against tag `1.5.1`.*
+*(Verbatim compiler transcript, kept unedited, from hubot `f08bb1c` against tag `1.5.1`; the
+line number is that commit's. It stays on this page because it is the record of what this
+package was, and a correction that erases its own evidence reads as if the gap had never been
+there.)*
+
+**What changed.** That constant was our copying mistake, not upstream's omission. It is a
+discriminator for the `CostmapFilterInfo.type` field — a number your own
+`costmap_filter_info_server` publishes out of your YAML. This package needs to **agree** with
+that number; it never needed to **obtain** it from nav2's header. It is now
+`hubot::kZoneParameterFilterType` (`include/hubot/zone_parameter_filter.hpp:64`), and two
+`static_assert`s guard it: one fires on **any** nav2 if upstream renumbers its filters, one fires
+wherever nav2 carries the constant and disagrees with ours. **Measured**: the full nav2
+dependency chain built from tag `1.5.1`; this package built and installed against it; the plugin
+resolved and ran through a live `LayeredCostmap` there. **Building is not passing**: 23 of 26
+tests pass on that release — the three that do not are one pre-existing case identical on
+branch, and two whose *upstream-comparison* arm needs a plugin that exists only on branch.
+`1.5.0` was not built and is not claimed.
 
 **Do not take our word for it — check your own installation:**
 
@@ -59,23 +70,18 @@ against tag `1.5.1`.*
 grep -r ZONE_PARAMETER_FILTER "$(ros2 pkg prefix nav2_costmap_2d)"/include
 ```
 
-**No output means this package will not build for you.** A version number cannot tell you:
-tag `1.5.1` and `lyrical` HEAD both declare `<version>1.5.1</version>`, and only the second
-one works.
+**That command used to be your clock. It is now a diagnostic.** No output means you have a
+release-era nav2 — **this package builds for you anyway**, on its own discriminator. Output means
+your nav2 carries the constant, and the build cross-checks ours against it at compile time.
+Either way a version number cannot tell you which you have: tag `1.5.1` and `lyrical` HEAD both
+declare `<version>1.5.1</version>`.
 
-**What you are waiting on:** a nav2 release that carries that constant. We have not measured
-one existing. **That command is your clock** — when it prints a line, this package builds for
-you. It is a wait, not a wall, and it is checkable on your machine rather than datable on this
-page.
+**What still stands between you and running it is not the build.** This repository has no remote
+and no release tag; it builds, but obtaining the source is a separate question this page does not
+yet answer.
 
-⚑ **And it is our line, not upstream's omission.** That constant is a discriminator for the
-`CostmapFilterInfo.type` field — a number your own `costmap_filter_info_server` reads out of
-your YAML. This package needs to **agree** with that number; it never needed to **obtain** it
-from nav2's header. The dependency is a copying mistake of ours, the fix is ours, and it is
-not made yet.
-
-**Everything below describes a package you cannot yet install.** It is accurate about what the
-filter does and how it is configured; it is aspirational about your getting it.
+**Everything below describes a package you can now build.** It is accurate about what the filter
+does and how it is configured.
 
 ### One thing you CAN run today, with no toolchain at all
 
@@ -190,15 +196,6 @@ An absolute name (`/controller_server`, as every example above writes it) is use
 as given. A relative name (`controller_server`) is resolved **against the parent
 namespace** — the identical rule this filter already applied to its own four topic names.
 
-⚑ *Until 2026-09-06 it was not. We resolved our own names and passed yours through raw, so
-under any namespaced launch a relative `node:` resolved against the root while our topics
-resolved against the parent: a parameter client was built for a node that does not exist,
-the set never landed, and the only thing that eventually noticed was the `set_parameters`
-deadline — which reports a timeout, not a name. The word "namespace" appeared **zero
-times** in this file, so there was nowhere you could have read the requirement either.
-Absolute names were never affected, which is why every example above kept working and the
-fault stayed invisible to us.*
-
 > ### ⚑ Two warnings about this example, both measured 2026-09-06
 >
 > **1. `nominal_defaults` cannot be written as nested YAML, and we do not yet have a
@@ -286,7 +283,10 @@ enforcement failure. Your existing operator tools already render it.
 
 **`report_period_s`** is how often the next message is due — the heartbeat period actually in
 effect, not the configured default. **`valid_for_s`** is how long *this* message should be
-treated as current: `2.5 x report_period_s`. It is wide enough to survive one dropped or late
+treated as current: `2.5 x report_period_s`, **clamped to `costmap_silence_timeout`** while
+that detector is on — a message must never declare itself current past the age at which this
+filter would call its own reading stale (at the shipped defaults that clamps 2.5 s to **2.0 s**,
+and the filter logs one warning at startup naming both numbers). It is wide enough to survive one dropped or late
 heartbeat without expiring a healthy publisher, and narrow enough that a dead one is stale
 inside three periods. **If `now - header.stamp > valid_for_s`, stop believing the message** —
 including its `enforced` field. That is the check you have to perform; see the bound at the end
@@ -331,27 +331,25 @@ one.
 
 ## Read this before you deploy it
 
-**⚑ THIS DOES NOT BUILD AGAINST A RELEASED nav2. Check yours before you plan on it.**
+**⚑ It builds against released nav2 `1.5.1` — measured, not assumed — and against branch HEAD.**
 
-`src/zone_parameter_filter.cpp:198` and `:202` use `nav2_costmap_2d::ZONE_PARAMETER_FILTER`.
-That constant is **absent from every nav2 release**. Measured 2026-09-06 by building this
-package against upstream tag `1.5.1` (commit `a6354f3f`), from a clean workspace:
+The blocker that stood here this morning was one symbol, `nav2_costmap_2d::ZONE_PARAMETER_FILTER`,
+absent from every release tag. Patching past it and rebuilding the entire nav2 chain from tag
+`1.5.1` showed **it was the only blocker**, at eight sites; the three candidates for a second one
+were refuted by that build. It is replaced by `hubot::kZoneParameterFilterType`, `static_assert`-
+guarded on every nav2. The record of what it was — the compiler transcript, the check, what
+changed — is in the section near the top of this page and in the changelog, not repeated here.
 
-```
-src/zone_parameter_filter.cpp:119:37: error: 'ZONE_PARAMETER_FILTER' is not a member of 'nav2_costmap_2d'
-```
-
-⚑ *Verbatim transcript, kept unedited. Its `:119` is hubot `f08bb1c`, the commit built; the
-same use is now at `:198`. See the note in the install-blocker section above for why the
-number inside a recorded tool output is not rewritten.*
-
-Absent from tag `1.5.0` and tag `1.5.1`; present on branches `main` and `lyrical`. **So today
-this package installs only on a nav2 branch HEAD.** Whether anything else also blocks a release
-build is **UNVERIFIED** — the compiler stopped at the first error and we did not patch past it.
+**What is and is not verified on that release.** The library and every test binary build; 23 of
+26 tests pass; the plugin resolves and runs through a live `LayeredCostmap`. The three that fail
+are one pre-existing case identical on branch, and two whose *upstream-comparison* control loads
+a plugin that exists only on branch. `1.5.0` is not built and not claimed. `rmw_fastrtps_cpp`
+only.
 
 ⚑ **A version number will not tell you which nav2 you have.** Tag `1.5.1` (`a6354f3f`) and
-`lyrical` HEAD (`6f23b11c`) both declare `<version>1.5.1</version>`, and this package builds
-against exactly one of them. Check for the constant, not the number:
+`lyrical` HEAD (`6f23b11c`) both declare `<version>1.5.1</version>`. It no longer decides whether
+this package builds — it decides whether the build cross-checks our discriminator against
+upstream's. Check for the constant, not the number:
 
 ```
 grep -r ZONE_PARAMETER_FILTER "$(ros2 pkg prefix nav2_costmap_2d)"/include
@@ -373,26 +371,12 @@ against released nav2 **1.5.1** (tag `a6354f3f`): `CostmapFilter::updateCosts()`
 (`costmap_filter.hpp:114`); and `Layer::isCurrent()` is not virtual (`layer.hpp:138`).
 `enforcementDegraded()` is public and nothing in nav2 calls it.
 
-⚑ **CORRECTED 2026-09-06. This paragraph said the channel was *"closed to a derived filter
-three ways, measured on released `lyrical`"*. Two things were wrong with that.** First,
-there is no "released `lyrical`" — `lyrical` is a branch; the releases are tags. Second,
-**this package's own header had already retracted the "closed three ways" conclusion**
-(`include/hubot/zone_parameter_filter.hpp`, AoU-1) on the ground that
-`Layer::setCurrent(bool)` is **public** (`layer.hpp:147`, inside the `public:` region that
-opens at `:61` and ends at `:181`, verified 2026-09-06) — so the capability exists in the
-base class and is erased by *statement order* in the derived one, not by an architecture.
-The retracted sentence was restated here in the same commit that corrected the header.
-**What you must do is unchanged either way**, so the instruction below still stands.
+`Layer::setCurrent(bool)` is **public** (`layer.hpp:147`), so the capability exists in the base
+class and is erased by *statement order* in the derived one, not by an architecture. What you
+must do is the same either way.
 
 **So: subscribe to `zone_decision` and ⚑ PROCEED ONLY ON `enforced: yes`.** If you do not,
 hubot has told you and nothing has listened.
-
-⚑ **CORRECTED 2026-09-06, and the correction is about shape, not wording.** This read
-*"refuse to drive on `enforced: NO` or `pending`"* — **a blacklist**, which cannot be
-complete, and which **fails open**: a consumer coded literally against those two strings
-would have read the new `unknown` as permission to drive. A rule that admits every value
-it has not heard of is the wrong rule on a surface like this one regardless of how many
-values exist today. It is a whitelist now.
 
 **It has never run on a robot.** Verified 2026-09-06 from a clean workspace against
 **upstream `lyrical` branch HEAD `6f23b11c`, with no local nav2 patches on the path**:
@@ -403,15 +387,6 @@ live `LayeredCostmap::updateMap()` and a **negative control that requires upstre
 filter, loaded from that same build, to throw out of `updateMap()` on the same input**. It
 does (`"ZoneParameterFilter: set_parameters failed: parameter 'readonly_speed' cannot be set
 because it is read-only"`), so the harness can see the failure it rules out.
-
-⚑ **CORRECTED 2026-09-06 — this bound previously read *"builds green against ROS `lyrical`
-with `nav2_costmap_2d` 1.5.1"*. The tree it was green against declared `<version>1.5.0</version>`
-and carried local nav2 modifications nothing warned about: measured 2026-09-06 against upstream
-`lyrical` HEAD, **six modified files** — `layered_costmap.hpp`/`.cpp` and
-`footprint_subscriber.hpp`/`.cpp` (26 lines), `keepout_filter.cpp` (7) and
-`nav2_util/src/path_utils.cpp` (30) — **two of them the production caller's own class**, in a
-directory that is not a git repository. And against *released* 1.5.1 it does not build at all (see the first bound above). A build inside a tree that may hold your own
-edits says nothing about a stranger's build.**
 
 That is a gtest process, not a vehicle. Nothing here has run on real hardware, and nothing here
 has run inside a real `controller_server`.
@@ -509,24 +484,17 @@ works against this publisher** — it raises the alarm in *your* node when ours 
 including the case this package cannot otherwise reach, the node dying with its last
 message left standing.
 
-**We offer a deadline of `liveness_period x 2.5` — the same number we publish as
-`valid_for_s`.** One promise, stated on two channels, so they cannot drift apart. At the
-default `liveness_period` of 1.0 s that is **2.5 s**.
+**We offer a deadline equal to `valid_for_s` — `liveness_period x 2.5`, clamped to
+`costmap_silence_timeout`.** One promise, stated on two channels, computed in one place, so they
+cannot drift apart. At the shipped defaults that is **2.0 s** (the clamp), not 2.5 s.
 
 ⚑ **The trap, and it is the opposite of what you would guess: `DEADLINE` is a
 Request/Offered policy, and the offered period must be *less than or equal to* the
-requested one. So you must request a deadline NO SHORTER than ours.** Request `2.5 s` or
+requested one. So you must request a deadline NO SHORTER than ours.** Request `2.0 s` or
 more at default settings and you match. Request `1.0 s` — a stricter, more cautious value —
 and the subscription **silently does not match and you receive nothing.** Set an
 `incompatible_qos_callback` on your subscription and you will be told; without one, an
 over-strict request is indistinguishable from a dead publisher.
-
-⚑ *Until 2026-09-06 this paragraph told you to use `DEADLINE` while the publisher was
-created with a bare `rclcpp::QoS(10)`, leaving the offered deadline at the middleware
-default of infinity. **An offered infinity satisfies no finite request**, so anyone who
-followed this instruction got a subscription that never matched and received nothing — our
-own documentation handing a person the exact silence this package exists to abolish. It is
-fixed rather than deleted, because the advice was right and the publisher was wrong.*
 
 ⚑ **BOUND: measured on `rmw_fastrtps_cpp` only** (`test/sotif_gate_inertness_test.cpp`
 SC-5, two arms, the default-QoS control required to receive or the deadline arm proves
@@ -547,7 +515,7 @@ Findings raised on the upstream filter by nav2's maintainer are **not fixed upst
 anything in this package — if you run the upstream filter, those remain its business.
 
 ⚑ **But three of them describe a design this package SHARES, and saying otherwise was wrong.**
-Until 2026-09-06 this section implied they were simply not our subject. They were checked one by
+They were checked one by
 one against this source instead, and the result is a table in `doc/SPEC_COVERAGE.md` §4 giving a
 verdict and its evidence for each. In short: the `reset()`/`deactivate()` conflation **is here**
 and cannot be fixed the way he prescribed, because `CostmapFilter::reset()` is `final`; the

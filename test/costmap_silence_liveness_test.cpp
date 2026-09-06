@@ -104,7 +104,7 @@ public:
     publisher_ = create_publisher<nav2_msgs::msg::CostmapFilterInfo>(
       kInfoTopic, rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
     auto msg = std::make_unique<nav2_msgs::msg::CostmapFilterInfo>();
-    msg->type = nav2_costmap_2d::ZONE_PARAMETER_FILTER;
+    msg->type = hubot::kZoneParameterFilterType;
     msg->filter_mask_topic = kMaskTopic;
     msg->base = 0.0f;
     msg->multiplier = 1.0f;

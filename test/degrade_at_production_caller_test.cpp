@@ -292,7 +292,7 @@ protected:
     const std::vector<rclcpp::Parameter> & filter_config,
     int8_t mask_fill_value,
     const std::string & state_event_topic = "",
-    uint8_t info_type = nav2_costmap_2d::ZONE_PARAMETER_FILTER)
+    uint8_t info_type = hubot::kZoneParameterFilterType)
   {
     rclcpp::NodeOptions opts;
     std::vector<rclcpp::Parameter> all_overrides = {

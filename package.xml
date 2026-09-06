@@ -16,18 +16,23 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- ⚑ NOT VERIFIED, marked 2026-09-06 (CPP, G1 limb 4).
-       `<depend>nav2_costmap_2d</depend>` below carries NO version bound, which
-       reads as a claim of compatibility with every nav2_costmap_2d. It is not one.
-       Measured 2026-09-06: this package does NOT compile against released nav2
-       1.5.0 or 1.5.1 — src/zone_parameter_filter.cpp:198 needs
-       nav2_costmap_2d::ZONE_PARAMETER_FILTER, which exists only on branches
-       `main` and `lyrical`, in no release tag.
-       ⚑ AND THE MANIFEST CANNOT EXPRESS THE REAL CONSTRAINT: version_gte/version_lt
-       key on the version string, and tag 1.5.1 (a6354f3f) and lyrical HEAD
-       (6f23b11c) BOTH declare 1.5.1 while only the second one works. So the bound
-       is stated here in words rather than asserted in a field that would be wrong.
-       Verified against: upstream lyrical HEAD 6f23b11c only. -->
+  <!-- ⚑ VERIFIED against a RELEASE, 2026-09-06 (CPP, Phase B).
+       `<depend>nav2_costmap_2d</depend>` below carries no version bound. Earlier
+       the same day that read as a false compatibility claim, because the source
+       imported nav2_costmap_2d::ZONE_PARAMETER_FILTER, a symbol present on
+       branches `main`/`lyrical` and in no release tag, and the package did not
+       compile against 1.5.0 or 1.5.1. That import was a copying mistake: the
+       value is a wire discriminator the integrator's own costmap_filter_info_server
+       publishes, and this filter only has to agree with it. It is now
+       hubot::kZoneParameterFilterType (include/hubot/zone_parameter_filter.hpp),
+       cross-checked by static_assert against BINARY_FILTER+1 on every nav2 and
+       against the upstream symbol wherever CMake finds it.
+       Measured 2026-09-06: builds and installs against release tag 1.5.1 with the
+       whole nav2 dependency chain built from that tag; the plugin resolves and
+       runs through a live LayeredCostmap there. 1.5.0 was NOT built and is not
+       claimed. The manifest still cannot express a version constraint honestly - -
+       tag 1.5.1 and lyrical HEAD both declare 1.5.1 - - so none is asserted.
+       Verified against: release tag 1.5.1 (a6354f3f) AND lyrical nightly. -->
   <depend>rclcpp</depend>
   <depend>rclcpp_lifecycle</depend>
   <depend>pluginlib</depend>

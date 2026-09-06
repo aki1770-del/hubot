@@ -46,6 +46,34 @@ target_link_libraries(hubot_costmap_filters PUBLIC
   ${geometry_msgs_TARGETS}
   ${rcl_interfaces_TARGETS})
 
+# ⚑ DOES THIS nav2 CARRY ZONE_PARAMETER_FILTER? Probe the SYMBOL, not the header.
+# `filter_values.hpp` exists at release tag 1.5.1 AND on branch HEAD; only the
+# branch defines the constant inside it. So `__has_include` cannot tell them
+# apart -- measured 2026-09-06, both substrates, file present in both -- and the
+# first draft of this fix proposed exactly that and would have guarded nothing.
+# The result drives a static_assert in the public header: where upstream DOES
+# carry the constant, a value disagreement is a compile error rather than a
+# silent wire mismatch; where it does not, hubot's own discriminator stands
+# alone and the always-on BINARY_FILTER+1 cross-check still fires.
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES ${nav2_costmap_2d_INCLUDE_DIRS})
+set(CMAKE_REQUIRED_FLAGS "-std=c++17")
+check_cxx_source_compiles("
+#include <cstdint>
+#include <nav2_costmap_2d/costmap_filters/filter_values.hpp>
+int main() { return static_cast<int>(nav2_costmap_2d::ZONE_PARAMETER_FILTER); }
+" HUBOT_UPSTREAM_HAS_ZONE_PARAMETER_FILTER)
+unset(CMAKE_REQUIRED_INCLUDES)
+unset(CMAKE_REQUIRED_FLAGS)
+if(HUBOT_UPSTREAM_HAS_ZONE_PARAMETER_FILTER)
+  # PUBLIC so every test target linking this library inherits the cross-check.
+  target_compile_definitions(hubot_costmap_filters PUBLIC
+    HUBOT_UPSTREAM_HAS_ZONE_PARAMETER_FILTER=1)
+  message(STATUS "hubot: upstream nav2 carries ZONE_PARAMETER_FILTER -- our discriminator is cross-checked against it at compile time")
+else()
+  message(STATUS "hubot: upstream nav2 does NOT carry ZONE_PARAMETER_FILTER (release-era) -- using hubot::kZoneParameterFilterType alone")
+endif()
+
 install(TARGETS hubot_costmap_filters
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)

@@ -77,6 +77,7 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "pluginlib/class_loader.hpp"
+#include "pluginlib/exceptions.hpp"
 #include "nav2_ros_common/lifecycle_node.hpp"
 #include "nav2_ros_common/tf2_factories.hpp"
 #include "geometry_msgs/msg/pose.hpp"
@@ -130,7 +131,7 @@ public:
     publisher_ = create_publisher<nav2_msgs::msg::CostmapFilterInfo>(
       kInfoTopic, rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
     auto msg = std::make_unique<nav2_msgs::msg::CostmapFilterInfo>();
-    msg->type = nav2_costmap_2d::ZONE_PARAMETER_FILTER;
+    msg->type = hubot::kZoneParameterFilterType;
     msg->filter_mask_topic = kMaskTopic;
     msg->base = 0.0f;
     msg->multiplier = 1.0f;
@@ -396,11 +397,75 @@ protected:
   rclcpp::executors::SingleThreadedExecutor node_executor_;
   rclcpp::executors::SingleThreadedExecutor target_executor_;
   rclcpp::executors::SingleThreadedExecutor pub_executor_;
+
+  // ⚑ THE REASON, OR EMPTY. A and C discriminate this package against
+  // UPSTREAM's `nav2_costmap_2d::ZoneParameterFilter`, loaded by pluginlib
+  // name. A released nav2 does not ship that class (measured 2026-09-06 at tag
+  // 1.5.1: declared by nothing on the install), so on a release those cases
+  // have no control. They SKIP with this reason -- a skip that says why, never
+  // a pass manufactured by the absence of the thing under test. Declaration is
+  // checked first (cheap, no throw), then loadability by attempt, so the reason
+  // is right on either failure shape pluginlib produces.
+  std::string upstreamControlUnavailableReason()
+  {
+    const auto declared = loader_.getDeclaredClasses();
+    if (std::find(declared.begin(), declared.end(), std::string(kVanillaClass)) ==
+      declared.end())
+    {
+      return std::string(kVanillaClass) +
+             " is not declared to pluginlib on this substrate (a released nav2 does not "
+             "ship it)";
+    }
+    try {
+      auto probe = loader_.createSharedInstance(kVanillaClass);
+      (void)probe;
+    } catch (const pluginlib::PluginlibException & ex) {
+      return std::string(kVanillaClass) + " is declared but not loadable: " + ex.what();
+    }
+    return "";
+  }
 };
 
-// A -- pluginlib, not dlopen.
+// A0 -- ⚑ OUR OWN CLASS THROUGH PLUGINLIB, ON WHATEVER SUBSTRATE THIS RUNS.
+//      Added 2026-09-06 on FBR's finding: "pluginlib loadability of hubot's own
+//      class on the release is UNVERIFIED by this suite. Yesterday's dlopen is
+//      not pluginlib." Case A below asserts the same load but ALSO loads
+//      upstream's class, and on a release it aborts on that arm before this
+//      assertion can report. This case depends on nothing upstream and must be
+//      green on every substrate the package claims.
+TEST_F(PluginlibLiveCostmap, A0_PluginlibResolvesHubotsOwnClassOnThisSubstrate)
+{
+  const auto declared = loader_.getDeclaredClasses();
+  ASSERT_NE(
+    std::find(declared.begin(), declared.end(), std::string(kHubotClass)),
+    declared.end())
+    << "pluginlib cannot see hubot::ZoneParameterFilter in the ament index on "
+       "this substrate. nav2 loads costmap filters only through this loader "
+       "(costmap_2d_ros.hpp:387); a dlopen() says nothing about it.";
+
+  std::shared_ptr<nav2_costmap_2d::Layer> instance;
+  ASSERT_NO_THROW(instance = loader_.createSharedInstance(kHubotClass));
+  ASSERT_NE(instance, nullptr);
+  EXPECT_NE(
+    std::dynamic_pointer_cast<nav2_costmap_2d::CostmapFilter>(instance), nullptr)
+    << "the declared base class must really resolve to a CostmapFilter";
+  EXPECT_NE(std::dynamic_pointer_cast<hubot::ZoneParameterFilter>(instance), nullptr);
+
+  const std::string lib = loader_.getClassLibraryPath(kHubotClass);
+  std::cout << "[identity] " << kHubotClass << " -> " << lib << std::endl;
+  EXPECT_NE(lib.find("hubot"), std::string::npos)
+    << "hubot::ZoneParameterFilter resolved to a library that is not ours: " << lib;
+}
+
+// A -- pluginlib, not dlopen -- AND identity against upstream's class.
 TEST_F(PluginlibLiveCostmap, A_PluginlibResolvesAndInstantiatesTheClass)
 {
+  if (const std::string why = upstreamControlUnavailableReason(); !why.empty()) {
+    GTEST_SKIP() << "no upstream control on this substrate -- " << why
+                 << ". This case discriminates hubot's class against upstream's and "
+                    "cannot run without both; A0 above carries the hubot-only "
+                    "assertions and must be green here.";
+  }
   const auto declared = loader_.getDeclaredClasses();
   EXPECT_NE(
     std::find(declared.begin(), declared.end(), std::string(kHubotClass)),
@@ -527,12 +592,12 @@ TEST_F(PluginlibLiveCostmap, B2_LiveLayeredCostmap_PublishesTheHumanDecisionSurf
 //      It must throw out of updateMap().
 TEST_F(PluginlibLiveCostmap, C_NegativeControl_UpstreamFilterEscapesUpdateMap)
 {
-  const auto declared = loader_.getDeclaredClasses();
-  ASSERT_NE(
-    std::find(declared.begin(), declared.end(), std::string(kVanillaClass)),
-    declared.end())
-    << "the released nav2 filter is not loadable here, so there is no control "
-       "and the other two tests in this file must not be quoted as evidence";
+  if (const std::string why = upstreamControlUnavailableReason(); !why.empty()) {
+    GTEST_SKIP() << "no upstream control on this substrate -- " << why
+                 << ". Without it, B is a property of this package that this file "
+                    "cannot discriminate from a property of the harness; B still "
+                    "runs, and this skip is the record that its control did not.";
+  }
 
   ASSERT_TRUE(bringUp(kVanillaClass));
 

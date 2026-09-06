@@ -32,10 +32,55 @@
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 
 #include "nav2_costmap_2d/costmap_filters/costmap_filter.hpp"
+#include "nav2_costmap_2d/costmap_filters/filter_values.hpp"
 #include "nav2_msgs/msg/costmap_filter_info.hpp"
 
 namespace hubot
 {
+
+/// ⚑ THE `CostmapFilterInfo.type` DISCRIMINATOR THIS FILTER ANSWERS TO -- ours,
+/// declared here, since 2026-09-06.
+///
+/// It was `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, which exists on nav2
+/// branches `main` and `lyrical` and in NO release tag -- so for a day this
+/// package "could not build against a released nav2". Measured 2026-09-06: that
+/// symbol was the ONLY blocker, at eight sites; with it substituted, hubot
+/// builds and installs against release tag 1.5.1 with the whole nav2 dependency
+/// chain built from that tag.
+///
+/// We never needed to OBTAIN the number from nav2's header. It is a wire value:
+/// the integrator's own `costmap_filter_info_server` publishes it out of their
+/// YAML and this filter only has to AGREE with it. Importing the symbol coupled
+/// our buildability to an upstream header revision for no benefit.
+///
+/// It is 4 because upstream numbers KEEPOUT_FILTER=0, SPEED_FILTER_PERCENT=1,
+/// SPEED_FILTER_ABSOLUTE=2, BINARY_FILTER=3, and the zone-parameter filter is
+/// the next one. Two static_asserts keep that honest: the first fires on ANY
+/// nav2 if upstream renumbers the existing filters; the second fires where
+/// upstream carries ZONE_PARAMETER_FILTER and disagrees with us. A bare literal
+/// with no cross-check -- the Phase A probe -- would have traded a loud build
+/// failure for a quiet runtime one, which is the reassuring-value family one
+/// layer out, and it must not ship.
+inline constexpr uint8_t kZoneParameterFilterType = 4;
+
+// Always on: these constants exist in EVERY nav2. Ours sits directly after
+// BINARY_FILTER; if upstream ever renumbers, this fires on release and branch.
+static_assert(
+  kZoneParameterFilterType == nav2_costmap_2d::BINARY_FILTER + 1,
+  "hubot::kZoneParameterFilterType must be BINARY_FILTER + 1: upstream nav2 has "
+  "renumbered its costmap-filter discriminators and this filter would answer to "
+  "the wrong CostmapFilterInfo.type on the wire");
+
+#if defined(HUBOT_UPSTREAM_HAS_ZONE_PARAMETER_FILTER)
+// Defined by CMakeLists.txt when a compile probe finds the SYMBOL upstream (a
+// header probe cannot: filter_values.hpp exists on both substrates). Where nav2
+// carries the constant, a disagreement is a COMPILE error, never a silent wire
+// mismatch.
+static_assert(
+  kZoneParameterFilterType == nav2_costmap_2d::ZONE_PARAMETER_FILTER,
+  "hubot::kZoneParameterFilterType disagrees with nav2_costmap_2d::ZONE_PARAMETER_FILTER "
+  "on this nav2; the two must name the same CostmapFilterInfo.type value");
+#endif
 
 /**
  * @class ZoneParameterFilter
@@ -347,6 +392,17 @@ protected:
   /// `costmap_silent_` becomes reachable with the detector disabled and this
   /// function is left alone. Both cases pass on the input fix.
   bool notWatching() const {return !ever_processed_ || costmap_silent_;}
+
+  /// How long a `zone_decision` message declares itself current, AND the
+  /// DEADLINE this publisher offers -- ONE number computed in one place, so the
+  /// promise in the payload and the promise on the QoS channel cannot drift.
+  /// `liveness_period x kValidForPeriods`, CLAMPED to `costmap_silence_timeout`
+  /// while that detector is on: a declared expiry must never exceed the age at
+  /// which this filter would call its own reading stale (SC-3). With the
+  /// detector off, the fallback silence budget IS `liveness_period x
+  /// kValidForPeriods`, so the two are equal by construction. 0 when the
+  /// heartbeat is disabled, because nothing periodic is then promised.
+  double declaredValidForS() const;
 
   /// The four-valued enforcement token: "NO", "unknown", "pending" or "yes".
   /// `unknown` is not a weaker `yes`; a consumer must treat it as `NO`. The

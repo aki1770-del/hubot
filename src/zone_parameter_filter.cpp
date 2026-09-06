@@ -134,6 +134,25 @@ void ZoneParameterFilter::initializeFilter(
       liveness_period_ > 0.0 ? liveness_period_ * kValidForPeriods : 0.0);
   }
 
+  // ⚑ V15 / SC-3: a wrong configuration is made VISIBLE, never silently
+  // corrected. Named once, at configure, with both numbers and the clamp.
+  // NOTE: the shipped defaults (liveness_period 1.0, costmap_silence_timeout
+  // 2.0) trip this. That is a value decision about the defaults, recorded here
+  // rather than hidden by quietly moving one of them.
+  if (liveness_period_ > 0.0 && costmap_silence_timeout_ > 0.0 &&
+    liveness_period_ * kValidForPeriods > costmap_silence_timeout_)
+  {
+    RCLCPP_WARN(
+      logger_,
+      "ZoneParameterFilter: valid_for_s would be %.3fs (liveness_period %.3f x %.1f) but "
+      "costmap_silence_timeout is %.3fs, so the published valid_for_s and the offered "
+      "DEADLINE are CLAMPED to %.3fs: a message must not declare itself current past the "
+      "age at which this filter calls its own reading stale. Raise costmap_silence_timeout "
+      "or lower liveness_period to remove the clamp. The shipped defaults trip this.",
+      liveness_period_ * kValidForPeriods, liveness_period_, kValidForPeriods,
+      costmap_silence_timeout_, declaredValidForS());
+  }
+
   filter_info_topic_ = joinWithParentNamespace(filter_info_topic);
   RCLCPP_INFO(
     logger_,
@@ -161,8 +180,9 @@ void ZoneParameterFilter::initializeFilter(
   // broken topic, not as "nobody is watching". A person following our
   // instructions was handed the one observable we exist to abolish.
   //
-  // THE NUMBER IS NOT CHOSEN TO PASS A TEST. It is `liveness_period_ *
-  // kValidForPeriods` -- byte-identical to the `valid_for_s` we already publish
+  // THE NUMBER IS NOT CHOSEN TO PASS A TEST. It is declaredValidForS():
+  // `liveness_period_ * kValidForPeriods`, clamped to the silence budget (SC-3),
+  // and byte-identical to the `valid_for_s` we already publish
   // in the payload, so the promise on the QoS channel and the promise in the
   // message are the same promise and cannot drift apart. It is a promise we can
   // keep: the heartbeat publishes every `liveness_period_` whether or not
@@ -180,8 +200,9 @@ void ZoneParameterFilter::initializeFilter(
   // for a permanent false alarm.
   rclcpp::QoS decision_qos(10);
   if (liveness_period_ > 0.0) {
-    decision_qos.deadline(
-      rclcpp::Duration::from_seconds(liveness_period_ * kValidForPeriods));
+    // The SAME number as `valid_for_s`, clamped the same way -- one promise,
+    // two channels. See declaredValidForS().
+    decision_qos.deadline(rclcpp::Duration::from_seconds(declaredValidForS()));
   }
   decision_pub_ = node->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
     joinWithParentNamespace(decision_topic_), decision_qos);
@@ -235,11 +256,11 @@ void ZoneParameterFilter::filterInfoCallback(
     mask_sub_.reset();
   }
 
-  if (msg->type != nav2_costmap_2d::ZONE_PARAMETER_FILTER) {
+  if (msg->type != hubot::kZoneParameterFilterType) {
     RCLCPP_ERROR(
       logger_,
         "ZoneParameterFilter: CostmapFilterInfo type is %i, expected %i (ZONE_PARAMETER_FILTER)",
-      msg->type, nav2_costmap_2d::ZONE_PARAMETER_FILTER);
+      msg->type, hubot::kZoneParameterFilterType);
     return;
   }
 
@@ -958,6 +979,28 @@ double ZoneParameterFilter::secondsSinceLastProcess() const
   return static_cast<double>(steadyNowNs() - last_process_steady_ns_.load()) * 1e-9;
 }
 
+double ZoneParameterFilter::declaredValidForS() const
+{
+  if (liveness_period_ <= 0.0) {
+    return 0.0;
+  }
+  const double from_heartbeat = liveness_period_ * kValidForPeriods;
+  // ⚑ THE CLAMP -- 2026-09-06, SC-3, the sixth generation of the reassuring-
+  // value family: YES-PAST-MY-OWN-DOUBT. At the shipped defaults this message
+  // declared itself current for 2.5 s (1.0 x 2.5) while the filter called its
+  // own reading stale at 2.0 s (costmap_silence_timeout). For half a second a
+  // consumer honouring the declared expiry acted on a claim the publisher had
+  // already disowned -- and neither parameter had a ceiling, so `liveness_period:
+  // 30.0` yielded a 75-second-old enforcement claim a consumer was told to
+  // believe. A bridge must not promise the human more currency than the robot's
+  // own doubt allows. Fixed in the value, not the oracle. The warning that names
+  // both numbers fires at configure (initializeFilter), once, so a wrong
+  // configuration is made visible rather than silently corrected (V15).
+  return costmap_silence_timeout_ > 0.0 ?
+         std::min(from_heartbeat, costmap_silence_timeout_) :
+         from_heartbeat;
+}
+
 void ZoneParameterFilter::livenessTick()
 {
   std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
@@ -1163,9 +1206,9 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
   add("costmap_age_s", std::to_string(costmap_age));
   add("report_seq", std::to_string(++report_seq_));
   add("report_period_s", std::to_string(liveness_period_));
-  add(
-    "valid_for_s",
-    std::to_string(liveness_period_ > 0.0 ? liveness_period_ * kValidForPeriods : 0.0));
+  // ⚑ Clamped to the silence budget -- declaredValidForS(), SC-3. Same number
+  // the publisher offers as its DEADLINE.
+  add("valid_for_s", std::to_string(declaredValidForS()));
 
   // ⚑ THE REASON MUST SURVIVE THE HEARTBEAT -- fixed 2026-09-06. `event` was
   // gated on a non-empty `detail`, and the 1 Hz heartbeat passes std::string()

@@ -31,10 +31,16 @@ nothing has been compiled."* The version conflict it named — a header from one
 a source from another — was resolved by choosing one, as it said it must be.
 
 **The build bound that DOES stand, and it is a different one:** this package compiles against
-nav2 branch HEAD (`main` or `lyrical`) and **NOT against any released nav2** — `1.5.0` or
-`1.5.1` — because `src/zone_parameter_filter.cpp:198` needs
-`nav2_costmap_2d::ZONE_PARAMETER_FILTER`, which is in no release tag. That bound is on
-`package.xml`, `README.md` and `CHANGELOG.md`, and it is unchanged by this correction.
+nav2 branch HEAD (`main` or `lyrical`) and — ⚑ **REVERSED 2026-09-06, later the same day** —
+**now also against release tag `1.5.1`.** The bound had read *"NOT against any released nav2,
+because `src/zone_parameter_filter.cpp:198` needs `nav2_costmap_2d::ZONE_PARAMETER_FILTER`."*
+Measured: that symbol was the only blocker, at eight sites, and it was a copying mistake — a
+wire discriminator we imported instead of declaring. It is now `hubot::kZoneParameterFilterType`
+(`include/hubot/zone_parameter_filter.hpp:64`), `static_assert`-checked on every nav2. Built
+and installed against tag `1.5.1` with the full nav2 chain from that tag; 23 of 26 tests pass
+there, and the three that do not are SC-3 (identical on branch) and the two pluginlib arms whose
+*upstream-comparison* control needs a plugin that exists only on branch. `1.5.0` is not built
+and not claimed. The old text is kept because it is the reason the new text exists.
 
 ---
 
@@ -42,7 +48,7 @@ nav2 branch HEAD (`main` or `lyrical`) and **NOT against any released nav2** —
 
 | specification | state | FIT / GAP |
 |---|---|---|
-| out-of-tree ROS 2 package installable without an upstream merge | ⚑ **CORRECTED 2026-09-06.** The `ament_cmake` layout and `pluginlib` export are present and correct — **but they were the wrong evidence for this row.** A plugin export says nothing about whether the translation unit compiles, and it does not, against any release: `src/zone_parameter_filter.cpp:198` needs `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, absent from every release tag. The row asked whether an integrator can install it and was answered with whether we packaged it. | ⚑ **GAP** — was **FIT** |
+| out-of-tree ROS 2 package installable without an upstream merge | ⚑ **CORRECTED 2026-09-06.** The `ament_cmake` layout and `pluginlib` export are present and correct — **but they were the wrong evidence for this row.** A plugin export says nothing about whether the translation unit compiles, and it does not, against any release: `src/zone_parameter_filter.cpp:198` needs `nav2_costmap_2d::ZONE_PARAMETER_FILTER`, absent from every release tag. The row asked whether an integrator can install it and was answered with whether we packaged it. ⚑ **REVERSED 2026-09-06, later the same day:** the symbol is replaced by `hubot::kZoneParameterFilterType`, the translation unit compiles against release tag `1.5.1`, and the plugin resolves and runs through a live `LayeredCostmap` on that release (`pluginlib_live_costmap_test` B and B2). This row asks about an upstream *merge*; it does not ask whether the package is *obtainable*, which is a separate bound (zero remotes) and the reach seat's to rule on. | **FIT** — was ⚑ **GAP** — was **FIT** |
 | licence clean | Apache-2.0; the upstream file's own header reads `Copyright (c) 2026 Komada (aki1770-del)` — we are the holder | **FIT** |
 | reachable by an integrator | nothing is published; repo is local only | **GAP** — a publish is Chair-only |
 | C++ estate | this is our first C++ repository; measured, we owned zero | **FIT**, newly |
