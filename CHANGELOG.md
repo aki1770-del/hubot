@@ -214,7 +214,7 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
   ⚑ This line read *"NOT IMPLEMENTED HERE AND NOT MEASURED"* for a turn after that was no
   longer true. The consumer must still request a deadline **no shorter** than ours.
 
-## [0.1.0]
+## [0.1.0] - 2026-09-06
 
 ### Added
 - `hubot::ZoneParameterFilter` — a `nav2_costmap_2d` costmap filter that applies
