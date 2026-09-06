@@ -5,6 +5,81 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
 ## [Unreleased]
 
 ### Added
+- **`test/maintainer_findings_test.cpp` — a harness built to the specification of a review we
+  already received.** nav2's maintainer found something on all three rounds of review of the
+  upstream sibling of this filter, and asked, plainly, *"which maybe you can catch yourself? Not
+  sure why I'm catching them but you're not."* His findings are the specification here.
+  Six cases. **Four failed on the parent commit before any fix existed** and are recorded with
+  that output; one is a negative control that must stay green; one is coverage for a breaking
+  change that had none.
+  - ⚑ **Why 486 passing tests caught none of them: every one of his findings is about a
+    SEQUENCE — a lifecycle transition or a message arrival order — and not one is "this function
+    computes the wrong value."** A value oracle cannot fail on a sequence defect.
+  - ⚑ **And why our own suite could not have caught them either: the setup helper waited the
+    defect out.** It called `resetFilter()` and then spun until `isActive()`, which is
+    `filter_mask_ != nullptr` — so it blocked until the latched mask had been redelivered, which
+    is precisely the window his blocking findings live in. **The new fixture has no
+    wait-for-active after a reset**; it calls `reset()` (the production entry point) and asserts
+    immediately, inside the window.
+- `doc/SPEC_COVERAGE.md` §4 now carries **a per-finding verdict with its evidence** — occurs
+  here / cannot occur here with a named reason / unverified — because *"does not apply here"* is
+  the sentence under which a defect survives a sweep.
+
+### Fixed
+- ⚑ **`enforced: yes` and `watching: yes` from a filter that had never been driven once.**
+  `initializeFilter()` runs at configure and starts the heartbeat; the costmap's update thread is
+  not created until activate. In that gap — **every ordinary bringup, and re-opened by every
+  routine `ClearEntireCostmap`** — the filter published level `OK`, `enforced: yes`,
+  `watching: yes`, having read no mask, applied no state and confirmed nothing. A consumer could
+  not distinguish it from a zone confirmed on every target.
+  - ⚑ **This is the fourth generation of one defect family, and the first three were all fixed
+    at a CALLER:** yes-on-issue, then yes-at-startup, then yes-during-silence. Each fix went into
+    a call site, and each new call site then arrived without it — `livenessTick()` was the new
+    caller this time. **This one is fixed in the VALUE.** `notWatching()` is a single predicate
+    that both `enforcementToken()` and the `watching` field derive from, so a future caller
+    cannot compute around it.
+  - The discriminator already existed: `ever_processed_` was written in three places and read in
+    exactly one — inside a message string, never in the token or the level. It is consulted by
+    the value now.
+  - **Not-yet-driven and stopped deliberately report identically**, because to a consumer they
+    are the same fact: nobody is watching.
+- ⚑ **A routine clear was silent on the surface that exists to report it.** `resetFilter()`
+  destroyed both publishers at the top and mutated every piece of state a reader depends on
+  below — mask, configuration, current state, outstanding sets — so nothing announced the
+  transition. **This is the ordering defect nav2's maintainer named on the upstream filter,
+  present here independently.** `resetFilter()` now clears state, publishes one farewell
+  describing the cleared state, and destroys the publishers last.
+- ⚑ **`pending` resolved to `yes` without any confirmation ever arriving.** `resetFilter()`
+  discards `pending_sets_` and `unconfirmed_targets_` while those requests are still on the wire,
+  so the filter forgot sets it had issued and could never learn their outcome — and the token it
+  published moved to the reassuring value by discarding the evidence that refuted it. Now covered
+  by the not-watching gate, so a clear reports `unknown` rather than `yes`.
+- The not-watching message no longer says *"Zone N's limits were last requested"* when nothing
+  was ever requested; the never-driven case gets its own sentence, true in its own branch.
+- ⚑ **`test/safety_invariants_static.sh` was wrong half the time, and nothing ran it.** It had
+  been committed since 2026-09-05 and was referenced by no CMake target, no hook and no cron —
+  so it had never fired. Run by hand on unchanged source that satisfies every invariant, it
+  reported **FAIL on 6 of 12 consecutive runs.** Cause, probed directly: two checks ended in
+  `| grep -q` under `set -o pipefail`; `grep -q` exits on its first match, SIGPIPEs the upstream
+  `grep`, and `pipefail` promotes the resulting 141 to the pipeline status (`rc=141` on 7 of 12
+  probe runs). ⚑ **The failure mode was inverted** — the more obviously the invariant held, the
+  likelier it was reported violated. Both sites now count with `grep -c`, which consumes its
+  input. **20/20 green on the true source; 5/5 red against each of two mutants** (one removing
+  the only code reference to `kMaxPendingSets`, one removing `pending_sets_.clear()`). It is now
+  registered with CTest, so it runs in `colcon test`.
+
+### Changed
+- `valid_for_s`'s `2.5` factor is now a named constant with its justification, and the README
+  **defines the field for a reader** rather than only listing it.
+- The README calls `valid_for_s` **"a declared expiry"** rather than *"a promise with a number in
+  it."* An advisory component may not make a promise about timing; the information is the same.
+- ⚑ **Corrected on this package's own face, rather than quietly:** `doc/SPEC_COVERAGE.md` said
+  *"none of the six is present in Hubot."* **Two of them are, one character-for-character**, and
+  that sentence is exactly the shape that lets a defect survive a sweep. `GAP-0` — *"THE PACKAGE
+  AS COMMITTED WILL NOT BUILD"* — is also superseded: every row of it is now false, re-measured
+  green. Both are corrected in place with the old text kept, because the old text is the reason
+  the new text exists.
+
 - **A positive liveness signal, so that silence on `zone_decision` reads as "I am not
   watching" rather than "you are safe."** A wall timer on the node — deliberately not on
   the costmap update loop — publishes every `liveness_period` whether or not anything

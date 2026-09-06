@@ -5,34 +5,36 @@ this turn, not from what the author intended. Nothing here is a plan.
 
 ---
 
-## ⚑ GAP-0 — THE PACKAGE AS COMMITTED WILL NOT BUILD, AND THIS IS THE HEADLINE
+## ⚑ GAP-0 — SUPERSEDED 2026-09-06. IT BUILDS, AND EVERY ROW BELOW IS NOW FALSE.
 
-I built the source from the **released `lyrical`** file and the header from the
-**PR #6372 head**. They are two different versions of the class. Measured on the
-committed tree:
+**This section was true when written (2026-09-05) and is false now.** It is corrected here
+rather than deleted, because a reader needs to know the package once could not be compiled
+at all and what that concealed.
 
-| symbol | declared in header | defined in source | consequence |
-|---|---|---|---|
-| `enterState()` | yes | **NO** | link failure if reached |
-| `reapplyAfterDrainIfDue()` | yes | **NO** | link failure if reached |
-| `reapply_after_drain_` | yes | **0 references** | dead member |
-| `kMaxPendingSets` | yes | **0 references** | dead constant |
-| `pending_sets_` | yes | **1 reference — mine** | container nothing fills |
+**Re-measured 2026-09-06 against upstream nav2 `lyrical` HEAD `6f23b11c`, clean workspace:**
+`colcon build` green, `colcon test` **35 tests, 0 errors, 0 failures, 0 skipped**.
 
-⚑ **And the last row is the worst of them.** `publishDecision()` reports
-`pending_parameter_sets` from `pending_sets_.size()`. The released source uses
-`pending_futures_`. **So the human-decision surface would publish a hard zero
-forever, and it would look like an answer.** Sakichi Vision 14: *"a function that
-returns a success-shaped value while the operation failed."* I built that defect
-into the feature whose entire purpose is to stop the machine hiding what it could
-not do.
+| symbol | GAP-0 said | measured 2026-09-06 |
+|---|---|---|
+| `enterState()` | declared, not defined | **0 occurrences in either file** |
+| `reapplyAfterDrainIfDue()` | declared, not defined | **0 occurrences in either file** |
+| `reapply_after_drain_` | dead member | **0 occurrences in either file** |
+| `kMaxPendingSets` | dead constant | **live: 1 decl + 3 uses** |
+| `pending_sets_` | container nothing fills | **live: 12 references, filled by `issueAsyncSetParameters()`** |
 
-**None of this surfaced because nothing has been compiled.** That is what "not
-built" was concealing, and it is why the bound had to be stated rather than felt.
+⚑ **The row GAP-0 called the worst of them is closed.** `publishDecision()` reports
+`pending_parameter_sets` from `pending_sets_.size()`, and `pending_sets_` is now the container
+the code actually fills. `pending_futures_` no longer exists anywhere.
 
-**FIT**: the package layout, manifests, plugin export and licence are correct and
-complete. **GAP**: the class does not hold together. One version must be chosen —
-released or PR-head — and the other discarded. **FBR/BDE own the build.**
+**GAP-0's own diagnosis was right and is worth keeping:** *"None of this surfaced because
+nothing has been compiled."* The version conflict it named — a header from one version against
+a source from another — was resolved by choosing one, as it said it must be.
+
+**The build bound that DOES stand, and it is a different one:** this package compiles against
+nav2 branch HEAD (`main` or `lyrical`) and **NOT against any released nav2** — `1.5.0` or
+`1.5.1` — because `src/zone_parameter_filter.cpp:119` needs
+`nav2_costmap_2d::ZONE_PARAMETER_FILTER`, which is in no release tag. That bound is on
+`package.xml`, `README.md` and `CHANGELOG.md`, and it is unchanged by this correction.
 
 ---
 
@@ -68,18 +70,45 @@ released or PR-head — and the other discarded. **FBR/BDE own the build.**
 | the topic is configurable | `decision_topic_` is **hardcoded**; every other topic is a declared parameter | ⚑ **GAP** |
 | alive when it is most needed | `decision_pub_` is torn down in `resetFilter()` — the same shape the maintainer flagged upstream for the state-event publisher | ⚑ **GAP** — the surface goes silent at the moment a reset drops the zone |
 
-## 4. What the maintainer's six findings do and do not touch
+## 4. The maintainer's six findings, one verdict each, measured against THIS package
 
-⚑ **Measured correction to an assumption I nearly shipped**: his six findings are
-about the changes **PR #6372 proposes**, not about the released code. His own
-sentence — *"resetFilter() **now** does applyState(0)"* — is about the PR. Hubot is
-built from the **released** file, so **none of the six is present in Hubot**, and
-none of the six is fixed by Hubot either. They are simply not this package's
-subject.
+⚑ **CORRECTED 2026-09-06. This section previously said, in full:** *"his six findings are about
+the changes PR #6372 proposes, not about the released code. Hubot is built from the released
+file, so **none of the six is present in Hubot**, and none of the six is fixed by Hubot either.
+They are simply not this package's subject."*
 
-**FIT**: Hubot's one behavioural change targets a defect that IS in the release —
-the abort. **GAP**: everything else on that thread remains upstream's, unfixed and
-under a Chair-ordered hold.
+**The last clause was reasoning, not measurement, and it was wrong.** Two of the six ARE present
+here — one of them character-for-character — and the sentence that hid them is the exact sentence
+under which a defect survives a sweep. The old text is kept above because it is the reason this
+table now exists.
+
+**Method.** Each finding was checked against `src/zone_parameter_filter.cpp` and
+`include/hubot/zone_parameter_filter.hpp` on disk this turn, by grep with the counts shown. A
+finding is only marked **cannot occur** when the *mechanism it names is absent*, and the reason
+is stated so a later reader can re-test it rather than trust it.
+
+| # | his finding | verdict here | evidence |
+|---|---|---|---|
+| 1 | `resetFilter()` calls `applyState(0)` when in a non-zero state, so a routine clear un-enforces the zone | **mechanism cannot occur; the CONSEQUENCE did, by another route** | `applyState` inside `resetFilter()`: **0 occurrences**. This filter does not restore on reset — so the zone's values *stay* on the target while the filter reports state 0. The lie inverts direction and the human-decision surface is wrong either way. Caught by `MF3`. |
+| 1b | `reset()` and `deactivate()` both land in `resetFilter()` and the plugin cannot tell them apart; `Layer::reset()` is virtual, so override it | **OCCURS HERE — and his remedy is impossible** | `void reset()` override in this header: **0**. But `CostmapFilter::reset()` is declared `final` (`costmap_filter.hpp:127`), so a subclass cannot override it; g++ rejects it. `CostmapFilter::deactivate()` is `resetFilter()`; `reset()` is `resetFilter(); initializeFilter(...); setCurrent(false);`. **No behavioural defect follows in this package** — the two paths differ only in what is rebuilt afterwards — so there is no failing test for it, and that is stated rather than papered over. |
+| 2 | `state_event_pub_` is destroyed *before* the state change, so the change is silent on the event topic | **OCCURRED HERE; FIXED 2026-09-06** | Same ordering was present: both publishers were destroyed at the top of `resetFilter()` and every state mutation followed. `resetFilter()` now clears state, publishes one farewell describing the cleared state, and destroys the publishers last. Caught by `MF4`. |
+| 3 | `param_clients_.clear()` + rebuild means a brand-new `AsyncParametersClient` per target on every clear | **OCCURS HERE, code shape identical. Trigger UNVERIFIED** | `param_clients_.clear()` at `:1181` inside `resetFilter()`; `param_clients_.emplace(...)` at `:385` inside `loadStateConfig()`, which `initializeFilter()` re-runs. So every `ClearEntireCostmap` destroys and rebuilds every client. **The discovery-race consequence is his engineering claim and this package has NOT reproduced it** — UNVERIFIED, never *cleared*. |
+| 4 | `sets_in_flight_before_restore` is sampled *before* the restore, so the restore's own sets never arm the re-apply | **cannot occur — no re-apply mechanism exists** | `sets_in_flight_before_restore`: **0 occurrences**. There is no drain-re-apply here at all; re-application is driven by the mask returning and `process()` running, not by a latch. ⚑ **The generalised form DOES occur and is tested:** `resetFilter()` discards `pending_sets_` and `unconfirmed_targets_` while those requests are still on the wire, so the filter forgets sets it issued. Caught by `MF5`. |
+| 5 | `reapply_after_drain_ = …` is an assignment, not an OR, so a second clear discards the re-apply owed by the first | **cannot occur — the flag does not exist** | `reapply_after_drain_`: **0 occurrences**. Nothing here accumulates work across two clears; `resetFilter()` is idempotent. |
+| 6 | `reapplyAfterDrainIfDue()`'s `state_still_configured` guard is effectively dead | **cannot occur — the function does not exist** | `reapplyAfterDrainIfDue`: **0**; `state_still_configured`: **0**. ⚑ **The generalised form — a guard the caller can walk around — DID occur:** the `!state_initialized_` guard in `publishDecisionOnStatusChange()` was bypassed by `livenessTick()` calling `publishDecision()` directly. Caught by `MF1`, and fixed in the *value* rather than at the caller. |
+
+**Three of six occur here in some form; three cannot, each for a named and re-testable reason.**
+The findings themselves are against the upstream filter's proposed changes and none of them is
+*fixed upstream* by anything in this package.
+
+**FIT**: this package's one behavioural change targets a defect that IS in the released upstream
+filter — the abort. **GAP**: everything else on that thread remains upstream's.
+
+⚑ **On the count.** He is variously recorded as raising 5, 6, 7, 8, 11 or 13 findings depending
+on which round and which grouping is counted. **6** is the count for the third review round with
+its root-cause limb listed separately (7 rows), and that is the set this table covers. **13** is
+the count across all three rounds. Neither 7 nor 8 is written down as a headline anywhere; both
+are reconstructions, and this file uses neither.
 
 ## 5. Instruments armed today, outside the package
 

@@ -202,6 +202,14 @@ enforcement failure. Your existing operator tools already render it.
 | `message` | a sentence to act on — *"Zone 2 is NOT being enforced on at least one target. Decide as if the zone's limits are not applied."* |
 | `values` | `zone_state`, `mask_state`, `enforced`, `configured`, `unconfirmed_targets`, `degraded_targets`, `pending_parameter_sets`, `targets`, the triggering `event`, and the liveness fields `watching`, `costmap_age_s`, `report_seq`, `report_period_s`, `valid_for_s` |
 
+**`report_period_s`** is how often the next message is due — the heartbeat period actually in
+effect, not the configured default. **`valid_for_s`** is how long *this* message should be
+treated as current: `2.5 x report_period_s`. It is wide enough to survive one dropped or late
+heartbeat without expiring a healthy publisher, and narrow enough that a dead one is stale
+inside three periods. **If `now - header.stamp > valid_for_s`, stop believing the message** —
+including its `enforced` field. That is the check you have to perform; see the bound at the end
+of the liveness section for why we cannot perform it for you.
+
 **It is published on every zone transition, on every enforcement change, and — ⚑ since
 2026-09-06 — every `liveness_period` seconds whether or not anything changed.** That last
 one is the subject of *"Silence means I am not watching"* below, and it is the reason a
@@ -213,7 +221,7 @@ quiet `zone_decision` is no longer the same thing as a healthy one.
 |---|---|
 | `yes` | every target of the current state has **confirmed** — ⚑ and the filter is still watching |
 | `pending` | ⚑ **the sets are issued and unanswered.** Nothing has gone wrong yet — and nothing is holding the robot back either. **Treat as no.** |
-| `unknown` | ⚑ **the costmap has stopped calling the filter.** Nothing has failed; nothing is being checked either. See `watching` below |
+| `unknown` | ⚑ **nobody is watching.** Either the costmap has stopped calling the filter, **or it has not called it yet** — since 2026-09-06 both read the same, because to you they are the same fact. Nothing has failed; nothing is being checked either. See `watching` below |
 | `NO` | a target rejected, threw, or fell silent past `set_parameters_timeout` — or the mask named a state with no configuration |
 
 ⚑ **`unknown` was added 2026-09-06 and it is a breaking change to this vocabulary.** It is
@@ -357,6 +365,15 @@ You would read *the zone is enforced*. The truth would be *nobody is checking*.
 2. **After `costmap_silence_timeout` (default 2.0 s) without a call, it says so** —
    `watching: NO`, level **`STALE`**, and `enforced` becomes **`unknown`**. `STALE` rather
    than `ERROR` on purpose: nothing was measured and found bad; nothing was measured.
+   ⚑ **And since 2026-09-06 the same three values are reported BEFORE the first call too.**
+   `initializeFilter()` runs at configure and starts this heartbeat; the costmap's update
+   thread does not exist until activate. In between, the filter had been publishing level
+   `OK` / `enforced: yes` / `watching: yes` having read no mask, applied no state and
+   confirmed nothing — indistinguishable from a zone enforced on every target. **A routine
+   `ClearEntireCostmap` re-opened that same window every time it fired.** The gate now lives
+   in the value (`enforcementToken()` and `watching` both derive from one predicate) rather
+   than at each caller, because the three previous fixes for this same defect all went into
+   callers and every new caller then arrived without them.
 3. ⚑ **It also does the work.** The `set_parameters` deadline check needs the clock and the
    futures and nothing from the costmap, so the timer runs it. **`pending` now resolves and
    the deadline now fires with the costmap stopped** — which is the larger half of the old
@@ -386,7 +403,7 @@ filter.
 ⚑ **THE PART THIS DOES NOT CLOSE, AND CANNOT.** **If the node itself dies, the timer dies
 with it**, no message arrives, and the last one stands — exactly as before. **Nothing
 running inside a process can announce that process's own death.** What you get instead of a
-bare stamp is a **promise with a number in it**: every message carries `report_period_s` and
+bare stamp is a **declared expiry**: every message carries `report_period_s` and
 `valid_for_s`, so three lines of consumer code can decide the report has expired, and
 `report_seq` advances on every publish so a frozen `/clock` cannot fake liveness. **That is
 strictly better than "check it". It is still something you must check.**
@@ -406,7 +423,15 @@ that a failed parameter set must never be silently swallowed, because that leave
 robot on the value a safety zone tried to change — is correct, is kept here
 verbatim in the source, and is the reason the reporting surface exists at all.
 
-Findings raised on the upstream filter by nav2's maintainer are **not** addressed in
-this package: a `reset()`/`deactivate()` conflation, an event-topic ordering gap, a
-parameter-client discovery race, and a re-apply arming window. If you run the
-upstream filter, those are its business and not superseded by anything here.
+Findings raised on the upstream filter by nav2's maintainer are **not fixed upstream** by
+anything in this package — if you run the upstream filter, those remain its business.
+
+⚑ **But three of them describe a design this package SHARES, and saying otherwise was wrong.**
+Until 2026-09-06 this section implied they were simply not our subject. They were checked one by
+one against this source instead, and the result is a table in `doc/SPEC_COVERAGE.md` §4 giving a
+verdict and its evidence for each. In short: the `reset()`/`deactivate()` conflation **is here**
+and cannot be fixed the way he prescribed, because `CostmapFilter::reset()` is `final`; the
+event-topic ordering gap **was here and is fixed**; the parameter-client rebuild **is here**,
+with its discovery-race consequence **UNVERIFIED, not cleared**; and the re-apply arming window
+**cannot occur here** because there is no re-apply mechanism at all. Each of those verdicts has a
+grep behind it, and the ones that occur have a test that fails without the fix.

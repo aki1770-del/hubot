@@ -303,7 +303,39 @@ protected:
   /// Emit the current zone situation in terms a person can act on.
   void publishDecision(const std::string & detail);
 
-  /// The three-valued enforcement token: "NO", "pending" or "yes".
+  /// ⚑ THE ONE PLACE THE "IS ANYBODY LOOKING" QUESTION IS ANSWERED, and it is a
+  /// function rather than a flag so that a new caller cannot fail to ask it.
+  ///
+  /// This is the FOURTH generation of one defect family in this package, and
+  /// the first three were all fixed at a CALLER:
+  ///   1. `enforced: yes` on the cycle the sets were ISSUED (nothing confirmed);
+  ///   2. `enforced: yes` at STARTUP, having set nothing and read no mask;
+  ///   3. `enforced: yes` during SILENCE, because the thing that would have
+  ///      refuted it had stopped running -- fixed by adding `unknown`;
+  ///   4. `enforced: yes` BEFORE THE FIRST TICK -- because `livenessTick()` was
+  ///      a new caller, and it arrived without the guard the third fix had put
+  ///      in `publishDecisionOnStatusChange()`.
+  ///
+  /// Every fix went into a caller and every new caller arrived without it. So
+  /// this one goes into the VALUE. `enforcementToken()` and the `watching`
+  /// field both derive from here, and neither can be computed around it.
+  ///
+  /// `ever_processed_` is the discriminator, and it already existed: it was
+  /// written in three places and read in exactly one -- inside a message
+  /// string, never in the level or the token. It is consulted by the value now.
+  ///
+  /// NOT-YET-DRIVEN and STOPPED are deliberately the same answer, because to a
+  /// consumer they are the same fact: nobody is watching. `initializeFilter()`
+  /// runs at CONFIGURE and starts the heartbeat; `map_update_thread_` is not
+  /// created until ACTIVATE (costmap_2d_ros.cpp:314). The gap between them is
+  /// every ordinary bringup, not an edge case -- and `resetFilter()` re-opens
+  /// it on every ClearEntireCostmap.
+  bool notWatching() const {return !ever_processed_ || costmap_silent_;}
+
+  /// The four-valued enforcement token: "NO", "unknown", "pending" or "yes".
+  /// `unknown` is not a weaker `yes`; a consumer must treat it as `NO`. The
+  /// documented consumer rule is a WHITELIST -- act only on "yes" -- because a
+  /// blacklist fails open the moment a fifth value is added.
   std::string enforcementToken() const;
 
   /// Publish only when that token has CHANGED since the last publish.

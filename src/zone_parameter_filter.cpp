@@ -42,6 +42,21 @@ int64_t steadyNowNs()
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
     std::chrono::steady_clock::now().time_since_epoch()).count();
 }
+
+/// How many heartbeat periods a `zone_decision` message stays good for, and the
+/// number published as `valid_for_s`. It appeared once as a bare `2.5` with no
+/// justification on any surface; here is the justification, because a magic
+/// number in a field a consumer is told to act on is a number nobody can check.
+///
+/// 2.5 is the smallest factor that tolerates ONE lost or late message without
+/// declaring a healthy publisher expired: at 2.0 a single dropped heartbeat
+/// expires the report, which would train a consumer to widen the value or stop
+/// reading it. It is small enough that a genuinely dead publisher is called dead
+/// inside three periods -- 2.5 s at the 1 Hz default.
+///
+/// It is deliberately NOT configurable. The number a consumer reads must not
+/// depend on a setting they cannot see from the message.
+constexpr double kValidForPeriods = 2.5;
 }  // namespace
 
 ZoneParameterFilter::ZoneParameterFilter()
@@ -866,7 +881,15 @@ std::string ZoneParameterFilter::enforcementToken() const
   // because the thing that would have refuted it had stopped running. The
   // reassuring value is now GATED ON THE LIVENESS OF ITS OWN REFUTER, which is
   // the whole countermeasure in one line.
-  if (costmap_silent_) {
+  //
+  // ⚑ AMENDED 2026-09-06, same day, on a safety-class consult: the gate was
+  // `costmap_silent_` alone, which stays false until the silence timeout
+  // elapses -- so a filter that had NEVER BEEN DRIVEN AT ALL sailed past it and
+  // reported `yes`. `notWatching()` covers both cases and is asked HERE, in the
+  // value, rather than at each caller. See its comment in the header for why:
+  // three earlier fixes for this same family all went into callers, and every
+  // new caller then arrived without them.
+  if (notWatching()) {
     return "unknown";
   }
   return unconfirmed_targets_.empty() ? "yes" : "pending";
@@ -951,7 +974,7 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
   st.name = "zone_parameter_filter";
   st.hardware_id = global_frame_;
 
-  // ⚑ CPP 2026-09-05 — N-3. `enforced` IS THREE-VALUED NOW, and the middle
+  // ⚑ CPP 2026-09-05 — N-3. `enforced` IS FOUR-VALUED NOW, and the middle
   // value is the finding. This block used to publish `enforced: yes` and
   // "Zone N is in force." on the SAME CYCLE the async sets were issued, with
   // zero confirmations in hand -- while the header, in this same package,
@@ -976,7 +999,7 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
       "were applied for it; what is in force is still zone " +
       std::to_string(static_cast<int>(current_state_)) +
       "'s. Decide as if this zone has no limits.";
-  } else if (costmap_silent_) {
+  } else if (notWatching()) {
     // ⚑ STALE, not ERROR, and the choice is deliberate. DiagnosticStatus has a
     // value that means exactly "this reading is not live" -- STALE = 3 -- and
     // every operator tool already renders it apart from a fault. Folding "I am
@@ -986,14 +1009,23 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
     // keep precedence for the same reason in reverse: they ARE measurements,
     // and they survive a silence.
     st.level = diagnostic_msgs::msg::DiagnosticStatus::STALE;
+    //
+    // ⚑ The two halves of `notWatching()` need different sentences, because
+    // "last requested" is FALSE when nothing was ever requested. A message that
+    // is true in one branch and false in the other is the same category of
+    // defect as a token that is true in one branch and false in the other.
     st.message =
-      "NOT WATCHING. No costmap update for " +
-      std::to_string(costmap_age) + "s" +
-      (ever_processed_ ? "" : " -- this filter has not been driven even once") +
-      ". Zone " + std::to_string(static_cast<int>(current_state_)) +
+      ever_processed_ ?
+      ("NOT WATCHING. No costmap update for " + std::to_string(costmap_age) +
+      "s. Zone " + std::to_string(static_cast<int>(current_state_)) +
       "'s limits were last requested but nothing has checked them since, and "
       "the mask is not being sampled. Decide as if nobody is watching, because "
-      "nobody is.";
+      "nobody is.") :
+      ("NOT WATCHING. This filter has not been driven even once (" +
+      std::to_string(costmap_age) + "s since it was initialised). It has read "
+      "no mask, applied no state and confirmed nothing, so it knows neither "
+      "where the robot is nor what is in force. Decide as if no zone limits "
+      "are being applied and nobody is watching.");
   } else if (unconfirmed) {
     st.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
     st.message =
@@ -1045,13 +1077,13 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
   //                       now is an expiry THE PUBLISHER DECLARED, evaluable by
   //                       three lines of consumer code, instead of a bare stamp
   //                       and the instruction "check it". Better. Not closed.
-  add("watching", costmap_silent_ ? "NO" : "yes");
+  add("watching", notWatching() ? "NO" : "yes");
   add("costmap_age_s", std::to_string(costmap_age));
   add("report_seq", std::to_string(++report_seq_));
   add("report_period_s", std::to_string(liveness_period_));
   add(
     "valid_for_s",
-    std::to_string(liveness_period_ > 0.0 ? liveness_period_ * 2.5 : 0.0));
+    std::to_string(liveness_period_ > 0.0 ? liveness_period_ * kValidForPeriods : 0.0));
 
   if (!detail.empty()) {
     add("event", detail);
@@ -1080,14 +1112,20 @@ void ZoneParameterFilter::resetFilter()
   }
   filter_info_sub_.reset();
   mask_sub_.reset();
-  if (state_event_pub_) {
-    state_event_pub_->on_deactivate();
-    state_event_pub_.reset();
-  }
-  if (decision_pub_) {
-    decision_pub_->on_deactivate();
-    decision_pub_.reset();
-  }
+
+  // ⚑ THE PUBLISHERS ARE NOT DROPPED HERE ANY MORE, and the reason is the
+  // maintainer's ordering finding on the upstream sibling: he showed that
+  // tearing the publisher down BEFORE the state change makes the state change
+  // silent on the very surface that exists to report it. The same ordering was
+  // here. Everything below mutates state a reader is relying on -- the mask,
+  // the configuration, the current state, the outstanding sets -- and the only
+  // thing that could have said so had already been destroyed.
+  //
+  // So the state is cleared first, one farewell message is published describing
+  // the state the reader is now in, and the publishers go last. A reset is a
+  // routine recovery (ClearEntireCostmap reaches it from seven of nav2's default
+  // behaviour trees), not an exceptional event, and going quiet through it while
+  // the last message stays on a screen is communicating something false.
 
   filter_mask_.reset();
   filter_info_received_ = false;
@@ -1141,6 +1179,25 @@ void ZoneParameterFilter::resetFilter()
   state_param_map_.clear();
   nominal_defaults_.clear();
   param_clients_.clear();
+
+  // ⚑ THE FAREWELL, published from the cleared state so that every field in it
+  // is true at the moment it is sent: no mask, no configuration, nothing
+  // outstanding, `ever_processed_` false, so the token is `unknown` and the
+  // level is STALE. A consumer that was reading `enforced: yes` a moment ago
+  // gets told, once, what happened -- rather than inferring it from a
+  // zone_state that silently became 0.
+  if (decision_pub_) {
+    publishDecision("costmap filter reset; mask and configuration dropped");
+  }
+
+  if (state_event_pub_) {
+    state_event_pub_->on_deactivate();
+    state_event_pub_.reset();
+  }
+  if (decision_pub_) {
+    decision_pub_->on_deactivate();
+    decision_pub_.reset();
+  }
 }
 
 bool ZoneParameterFilter::isActive()

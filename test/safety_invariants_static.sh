@@ -143,7 +143,26 @@ inv_b() {
 # A guard that a comment can satisfy is not a guard. Comment lines are stripped
 # before the check now.
 inv_c() {
-  if grep -v '^[[:space:]]*//' "$SRC" | grep -q 'kMaxPendingSets'; then
+  # ⚑ NOT `| grep -q`. Measured 2026-09-06: this line was
+  #     `grep -v '^[[:space:]]*//' "$SRC" | grep -q 'kMaxPendingSets'`
+  # and it reported FAIL on 6 of 12 consecutive runs over UNCHANGED source that
+  # SATISFIES the invariant. `grep -q` exits the instant it matches, which closes
+  # the pipe; the upstream `grep -v` is then killed by SIGPIPE and exits 141; and
+  # `set -o pipefail` at the top of this file promotes that 141 to the pipeline's
+  # status, so the `if` takes the else branch. Probed directly: `rc=141` on 7 of
+  # 12 runs, `rc=0` on the other 5.
+  #
+  # ⚑ The failure mode is INVERTED, which is the worst possible direction: the
+  # EARLIER the match is found, the likelier `grep -q` exits before the upstream
+  # finishes writing, so the more obviously the invariant holds, the more likely
+  # this reports that it does not. A guard that is loudest when it is wrong will
+  # be switched off by the first person it lies to.
+  #
+  # `grep -c` consumes all of its input, so there is no early close and no
+  # SIGPIPE. The count is then tested as a number rather than as an exit status.
+  local code_hits
+  code_hits="$(grep -v '^[[:space:]]*//' "$SRC" | grep -c 'kMaxPendingSets' || true)"
+  if [[ "${code_hits:-0}" -gt 0 ]]; then
     pass_one "INV-C" "kMaxPendingSets is referenced by CODE (not merely a comment) in the source"
   else
     fail_one "INV-C" "kMaxPendingSets is declared at $(grep -n 'kMaxPendingSets' "$HDR" | cut -d: -f1) and referenced 0 times in the source -- in-flight sets are unbounded and a never-answering target is never detected"
@@ -181,7 +200,10 @@ inv_d() {
     return
   fi
   for m in $members; do
-    if grep -v '^[[:space:]]*[0-9]*:[[:space:]]*//' <<<"$body" | grep -q "${m}\.clear()"; then
+    # Same SIGPIPE hazard as INV-C above; same remedy. See the note there.
+    local hits
+    hits="$(grep -v '^[[:space:]]*[0-9]*:[[:space:]]*//' <<<"$body" | grep -c "${m}\.clear()" || true)"
+    if [[ "${hits:-0}" -gt 0 ]]; then
       found+="$m "
     else
       missing+="$m "

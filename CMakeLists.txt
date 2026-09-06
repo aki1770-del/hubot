@@ -111,6 +111,29 @@ if(BUILD_TESTING)
     test/costmap_silence_liveness_test.cpp TIMEOUT 300)
   target_link_libraries(costmap_silence_liveness_test ${hubot_test_deps})
 
+  # ⚑ THE MAINTAINER-FINDING HARNESS. Every case drives a SEQUENCE and asserts
+  # INSIDE a transient -- between a reset and the mask coming back, between a set
+  # being issued and answered. The maintainer's findings all live in sequences;
+  # a value oracle cannot fail on one, which is why 486 passing tests caught none
+  # of them. Its fixture deliberately has NO wait-for-active after a reset,
+  # because the helper that waits for one waits the defect out.
+  ament_add_gtest(maintainer_findings_test
+    test/maintainer_findings_test.cpp TIMEOUT 300)
+  target_link_libraries(maintainer_findings_test ${hubot_test_deps})
+
+  # ⚑ THE STATIC INVARIANTS, WIRED IN 2026-09-06. It had been committed since
+  # 2026-09-05 and referenced by NOTHING -- not this file, not a hook, not a
+  # cron. It had therefore never fired, and when it was finally run by hand it
+  # reported FAIL on 6 of 12 consecutive runs over unchanged source that
+  # satisfies every invariant (a `| grep -q` under `set -o pipefail`: the early
+  # exit SIGPIPEs the upstream grep and pipefail promotes the 141). A guard
+  # nobody runs is not a guard, and a guard that is wrong half the time is worse
+  # than none. Repaired, two-sided-controlled against two mutants, and now run
+  # by `colcon test` where a regression is visible.
+  add_test(NAME safety_invariants_static
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test/safety_invariants_static.sh"
+                 "${CMAKE_CURRENT_SOURCE_DIR}")
+
   ament_add_gtest(survival_harness_test test/survival_harness_test.cpp TIMEOUT 300)
   target_link_libraries(survival_harness_test ${hubot_test_deps})
   target_compile_definitions(survival_harness_test PRIVATE
