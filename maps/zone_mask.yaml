@@ -1,0 +1,20 @@
+# The zone mask hubot reads. See zone_mask.pgm's own header for the two things
+# that are easy to get wrong; both are measured, not reasoned.
+image: zone_mask.pgm
+
+# ⚑ LOAD-BEARING. `raw` hands the literal pixel value through as the zone id
+# (nav2_map_server/src/map_io.cpp:316). `trinary` and `scale` threshold it and
+# would collapse every zone to the same one. A mask is not a map, and it must
+# not be loaded like one.
+mode: raw
+
+resolution: 0.5
+origin: [0.0, 0.0, 0.0]
+
+# Unused in raw mode -- map_io only reads negate/occupied_thresh/free_thresh on
+# the trinary/scale branch. Kept because the yaml loader requires them
+# (nav2_map_server/src/map_io.cpp loadMapYaml) and a reader should not have to
+# wonder whether they are doing something here. They are not.
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

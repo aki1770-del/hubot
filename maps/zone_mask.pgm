@@ -1,0 +1,52 @@
+P2
+# hubot example zone mask -- PLAIN TEXT ON PURPOSE (PGM "P2", ASCII).
+# 
+# This file is the mask, and it is also its own documentation. Edit it in any text
+# editor: each number is one costmap cell, and the number IS the zone id that
+# params/zone_filter_demo.yaml names. 0 means "outside every zone".
+# 
+# TWO THINGS THAT ARE EASY TO GET WRONG, BOTH MEASURED 2026-09-06 THROUGH A REAL
+# nav2 map_server, NOT REASONED:
+# 
+# 1. THE FIRST LINE OF THIS FILE IS THE TOP OF THE MAP, AND THE LAST LINE IS THE
+#    ORIGIN. An OccupancyGrid's row 0 sits at the yaml `origin`; an image's row 0
+#    is its top edge. So image row r becomes grid row (height-1-r). Painting the
+#    zone at the top of this file puts it at HIGH y, not at the origin.
+# 
+# 2. `mode: raw` IN THE .yaml IS LOAD-BEARING. Only raw hands the literal pixel
+#    value through (nav2_map_server/src/map_io.cpp:316,
+#    `result = gray_matrix.cast<int8_t>()`). `trinary` and `scale` run the value
+#    through thresholds and would collapse every zone id to 0 / 100 / -1 -- the
+#    stack would come up and every zone would read as the same zone.
+#    The same line clamps anything outside [0, 100] to -1, and hubot treats a
+#    negative cell as UNKNOWN and does not change state
+#    (src/zone_parameter_filter.cpp, `mask_data < 0`). So usable zone ids through
+#    nav2's own map_server are 1..100, not 1..255.
+# 
+# This zone covers world x,y in [5.0, 8.0) with resolution 0.5 and origin (0, 0).
+24 24
+255
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   1   1   1   1   1   1   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   1   1   1   1   1   1   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   1   1   1   1   1   1   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   1   1   1   1   1   1   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   1   1   1   1   1   1   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   1   1   1   1   1   1   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0
+  0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0   0

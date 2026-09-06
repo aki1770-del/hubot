@@ -17,13 +17,71 @@ tree than the default branch; everything after it, including **one silent breaki
 
 **Three more bounds, before the pitch rather than after it:**
 
-- ⚑ **It has never run on a robot.** It builds, its plugin loads, and its tests drive it
-  through a live `LayeredCostmap` — in a gtest process. Not a vehicle, and not inside a
-  real `controller_server`. **Pass counts differ by which nav2 you build against, so they
-  are not quoted here without one**; both are under *"Read this before you deploy it"*.
+- ⚑ **It has never run on a robot.** It builds, its plugin loads, its tests drive it
+  through a live `LayeredCostmap` in a gtest process, and — since 2026-09-06 — a shipped
+  launch file brings it up inside nav2's own `Costmap2DROS` in a container. Not a
+  vehicle. **Pass counts differ by which nav2 you build against, so they are not quoted
+  here without one**; both are under *"Read this before you deploy it"*.
 - **It is QM-class software. Nothing here is safety-certified.**
 - **It does not stop your robot.** It reports; you hold the stop. If you do not build the
   stop, nothing acts on what hubot says.
+
+---
+
+## Run it
+
+⚑ **Until 2026-09-06 this package shipped a plugin and told you to build the other four
+things a costmap filter needs before it can run at all** — a mask, a `map_server`
+publishing it, a `costmap_filter_info_server`, and params plus a launch file wiring them
+together. That homework is now in the package.
+
+```bash
+colcon build --packages-select hubot
+ros2 launch hubot zone_filter_demo_launch.py
+```
+
+In another terminal:
+
+```bash
+ros2 topic echo /zone_decision
+```
+
+You should see `enforced: yes` and *"Zone 1 is in force."*, and the target process should
+log `set_parameters ARRIVED HERE: demo_speed -> 0.3`. **If you see anything else, this
+launch file has not done its job — say so.**
+
+**What it starts**, all of it either a stock nav2 executable or a file this package
+installs — nothing is read from a source tree:
+
+| | |
+|---|---|
+| `maps/zone_mask.pgm` + `.yaml` | the painted zone. **Plain text — open it.** Its own header carries the two things about masks that are easy to get wrong. |
+| `maps/demo_map.pgm` + `.yaml` | the world, so the costmap's `static_layer` declares a window. Without a bounds-declaring plugin the filter is driven **zero times** and everything still looks healthy. |
+| `nav2_map_server` ×2 | one publishes the map, one publishes the mask. |
+| `costmap_filter_info_server` | tells the filter where the mask is, and with what `type`. |
+| `nav2_costmap_2d` | nav2's own standalone costmap, in namespace `/local_costmap` — no `controller_server`, no planner, no behaviour tree. |
+| `zone_target_demo_node` | **the node the limit is applied to.** On your robot this is `controller_server` and `FollowPath.max_vel_x`; the demo ships one so the first run ends in a working stack instead of in writing one. |
+
+### Two controls ship with it, and running one is worth more than running the demo twice
+
+```bash
+ros2 launch hubot zone_filter_demo_launch.py overlay:=overlay_target_readonly.yaml
+ros2 launch hubot zone_filter_demo_launch.py overlay:=overlay_target_inside_namespace.yaml
+```
+
+Both are **supposed** to end in `enforced: NO`, for two different reasons, with two
+different sentences — one target refuses the set, the other never receives it. A value
+with no control beside it is not evidence, which is this package's whole argument, so its
+own demo carries the controls. Each file says what to look for.
+
+You can also move the robot without a simulator:
+
+```bash
+ros2 launch hubot zone_filter_demo_launch.py robot_x:=2.0 robot_y:=2.0   # outside the zone
+```
+
+⚑ **The robot does not move during a run.** Nothing here is a simulator, and this package
+still has not run on one.
 
 ---
 
@@ -166,13 +224,31 @@ you edit it in any image editor. What matters is the **value of each pixel**:
 0    outside every zone — normal operation
 1    zone 1
 2    zone 2
-…    up to 255
+…    up to 100
 ```
 
 Paint the doorway area `1`, paint the loading bay `2`, leave everything else `0`. That
 is the whole map side of it. The mask is published by nav2's standard
 `costmap_filter_info_server` and `map_server` pair, exactly as it is for a keepout
 filter; nothing new is involved.
+
+> ### ⚑ Two things about that, measured 2026-09-06 through a real `map_server`
+>
+> **1. The ceiling is 100, and this page said 255 until it was measured.** In
+> `mode: raw` nav2's map loader clamps any value outside `[0, 100]` to `-1`
+> (`nav2_map_server/src/map_io.cpp:316-322`), and hubot treats a negative cell as
+> UNKNOWN and does not change state. So `101` and above are not "zone 101" — they
+> are "no reading", silently. The old sentence is kept here rather than deleted
+> because a reader who painted `200` needs to know what they were told.
+>
+> **2. `mode: raw` in the mask's `.yaml` is not optional.** `trinary` and `scale`
+> put every pixel through thresholds, which collapses every zone id to `0`, `100`
+> or `-1`. The stack still comes up; every zone just reads as the same zone. A
+> keepout mask is loaded `trinary` and a speed mask `scale`, so copying either
+> one's yaml is the wrong move here.
+>
+> A worked example, with both of these in its own header, is installed at
+> `maps/zone_mask.pgm` — see **Run it** below.
 
 ### You say what each number means
 
@@ -246,11 +322,23 @@ namespace** — the identical rule this filter already applied to its own four t
 > what the code reads. `states` does **not** have this problem — the state names are
 > different keys from `states` itself.
 >
-> **2. No YAML file has ever configured this filter.** The package contains **zero**
-> `.yaml` files and **zero** tests that load parameters from one; every test sets the
-> parameters programmatically. So the configuration path *you* would use is the one
-> path this package has never exercised. The parameter **names** above are read
-> straight from the source and are correct. The **file form** is not yet verified.
+> **2. The file form IS now exercised — that was not true until 2026-09-06.**
+> This warning read, in full: *"No YAML file has ever configured this filter. The
+> package contains zero `.yaml` files and zero tests that load parameters from
+> one; every test sets the parameters programmatically. So the configuration path
+> you would use is the one path this package has never exercised."* It is kept
+> here because a reader of the previous page was told to distrust the file form
+> and is owed the reason it changed.
+>
+> What changed: `params/zone_filter_demo.yaml` is a real parameter file, loaded
+> by a real `Costmap2DROS` from a launch file, and the run reaches `enforced:
+> yes` with the set arriving in the target's own process. See **Run it**.
+>
+> **What is still NOT verified from a file is `nominal_defaults` specifically** —
+> the sequence-and-mapping collision in warning 1 above is unchanged and no yaml
+> spelling of it has been made to load. The shipped launch file sets it as node
+> parameters instead, which is the form the code reads and the only form measured
+> to work. Everything else on this page's example loads from yaml.
 
 ### What actually happens when the robot drives in
 

@@ -1,0 +1,11 @@
+# The demo world. This is NOT the mask -- it is the map the costmap's
+# static_layer reads, and it is here so that a plugin declares a window every
+# cycle. Without one the filter is driven zero times and the stack still looks
+# healthy; see demo_map.pgm's own header for the measurement.
+image: demo_map.pgm
+mode: trinary
+resolution: 0.5
+origin: [0.0, 0.0, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

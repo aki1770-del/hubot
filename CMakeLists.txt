@@ -79,6 +79,22 @@ install(TARGETS hubot_costmap_filters
 install(DIRECTORY include/ DESTINATION include)
 install(FILES hubot_plugins.xml DESTINATION share/${PROJECT_NAME})
 pluginlib_export_plugin_description_file(nav2_costmap_2d hubot_plugins.xml)
+
+# ⚑ THE BRING-UP, ADDED 2026-09-06. Until this block existed the package shipped
+# a plugin and told the integrator to build the other four things a costmap
+# filter needs before it can run at all: a mask, a map_server publishing it, a
+# costmap_filter_info_server, and params plus a launch file wiring them.
+#
+# These are INSTALLED, not merely committed. The falsifier for the whole block is
+# that `ros2 launch hubot zone_filter_demo_launch.py` works from a clean-room
+# container that has the installed package and NO file from this repository -- so
+# anything the launch file reads has to arrive here or it does not exist.
+add_executable(zone_target_demo_node src/zone_target_demo_node.cpp)
+target_link_libraries(zone_target_demo_node
+  rclcpp::rclcpp
+  ${rcl_interfaces_TARGETS})
+install(TARGETS zone_target_demo_node DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY launch params maps DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   find_package(tf2_ros REQUIRED)

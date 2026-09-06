@@ -1,0 +1,47 @@
+# NEGATIVE CONTROL — a target that lives INSIDE the costmap's namespace, named
+# relatively. This is the live hazard, and it is a breaking change this package
+# made to itself on 2026-09-06 (CHANGELOG, PI-16).
+#
+#   ros2 launch hubot zone_filter_demo_launch.py \
+#     overlay:=overlay_target_inside_namespace.yaml
+#
+# WHAT THIS CONDITION IS. hubot now passes your `node:` name through nav2's
+# Layer::joinWithParentNamespace() (nav2_costmap_2d/src/layer.cpp:83-96), which
+# takes the owning node's namespace and strips everything after the last '/'.
+# The filter here is hosted by /local_costmap/costmap, so that namespace is
+# `/local_costmap` and the parent is `` -- a relative name becomes `/<name>`.
+#
+# For a target at the ROOT that is the fix: `zone_target_demo` becomes
+# `/zone_target_demo` and it works. For a target that genuinely lives at
+# `/local_costmap/<something>` it is the opposite: `costmap` becomes `/costmap`,
+# which does not exist, and the set goes nowhere.
+#
+# WHAT TO LOOK FOR:
+#
+#   ros2 service list | grep set_parameters
+#       -> /local_costmap/costmap/set_parameters EXISTS; /costmap does not
+#   an EXTERNAL  ros2 param set /local_costmap/costmap robot_radius 0.5
+#       -> succeeds, so the target is reachable and IS answering
+#   /zone_decision
+#       -> enforced: NO, and only after set_parameters_timeout expires
+#
+# THE FIX IS TO WRITE IT ABSOLUTE: node: "/local_costmap/costmap".
+#
+# ⚑ THIS FILE USED TO TEST THE OPPOSITE CASE AND THE TEST WAS WRONG.
+# Until it was run on 2026-09-06 it named a ROOT target relatively and claimed
+# that reproduced a namespace miss. It does not, on this tree: the join above
+# cures that case, and the run came back `enforced: yes`, arrivals=1. A control
+# that asserts a failure the package already fixed teaches a defect that no
+# longer exists and makes a working package look broken. It was replaced by the
+# case that is still real rather than deleted, and this paragraph is here so the
+# next reader knows which way round the hazard now points.
+
+local_costmap:
+  costmap:
+    ros__parameters:
+      zone_filter:
+        slow_zone:
+          cap_speed:
+            node: "costmap"
+            parameter: "robot_radius"
+            value: 0.55

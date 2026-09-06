@@ -1,0 +1,181 @@
+# hubot — the working configuration for launch/zone_filter_demo_launch.py.
+#
+# This file is the answer to "what do I actually have to write to make a costmap
+# filter run?". A costmap filter needs FIVE things and the plugin is only the
+# first: a mask, a map_server publishing it, a costmap_filter_info_server, and
+# params plus a launch file wiring them together. Four of the five are here and
+# in the launch file beside it.
+#
+# ════════════════════════════════════════════════════════════════════════════
+# ⚑ THREE THINGS IN THIS FILE ARE LOAD-BEARING AND WERE LEARNED BY RUNNING IT.
+#   A stranger cannot re-derive any of them from the source, and each cost a
+#   debugging session. They are kept here, in the file they apply to, because a
+#   comment in a document nobody opens is not a countermeasure.
+# ════════════════════════════════════════════════════════════════════════════
+#
+# 1. NO EMPTY LISTS ANYWHERE IN A ROS 2 PARAMS FILE. Learned on nav2's
+#    controller_server, verbatim from the harness that found it:
+#
+#      "`progress_checker_plugins: []` does not mean 'no progress checkers'; a
+#       YAML empty sequence carries no element type, so rcl builds a parameter
+#       with no value and rclcpp throws while CONSTRUCTING the node:
+#         InvalidParameterValueException: parameter_value_from failed for
+#         parameter 'progress_checker_plugins': ... Contains no value
+#       The process aborts before on_configure, before the costmap thread
+#       exists. Omit the key instead."
+#
+#    ⚑ THAT SENTENCE IS CARRIED, NOT COPIED. It was measured on
+#    `controller_server`, which this demo does not run. The mechanism is rcl's,
+#    not that node's, so it applies to every key below — but the specific
+#    parameter it names is not in this file, and no run of THIS file has
+#    reproduced it. If you want an empty list here, omit the key.
+#
+# 2. `plugins:` MUST NOT BE EMPTY, AND NOT ONLY FOR THE REASON ABOVE.
+#    CostmapFilter::updateBounds() ignores all four of its bounds arguments. If
+#    no PLUGIN declares a window, LayeredCostmap::updateMap() leaves the bounds
+#    inverted and the `if (xn >= x0 && yn >= y0)` guard around every filter's
+#    updateCosts() is never satisfied. The stack comes up, spins, publishes a
+#    costmap — and drives the filter ZERO times, looking healthy the whole time.
+#    `static_layer` is here for that, and `rolling_window: true` is why it keeps
+#    working: rolling, static_layer declares the full window on EVERY cycle
+#    (nav2_costmap_2d/plugins/static_layer.cpp:393-406); non-rolling it declares
+#    bounds only when the map CHANGED (:385-388), which would drive the filter
+#    once and then never again.
+#
+# 3. THE DOUBLED KEY BELOW IS THIS LAUNCH'S OWN, AND IT IS NOT THE ONE YOU WILL
+#    NEED ON A ROBOT. nav2's standalone costmap binary is
+#    `nav2::LifecycleNode("costmap", "")` (nav2_costmap_2d/src/costmap_2d_ros.cpp:65),
+#    so put into namespace /local_costmap it answers to `local_costmap: costmap:`.
+#    Under a real `controller_server` the costmap is constructed as
+#    `Costmap2DROS("local_costmap", get_namespace(), ...)` and the key is
+#    `local_costmap: local_costmap:` instead. Same idea, different second word.
+#    Copying the wrong one gives you a costmap that comes up with none of your
+#    parameters and no error saying so.
+#
+# Line numbers above were read at navigation2 f3cacb29. The BEHAVIOUR is what
+# the clean-room run measures; the line numbers are where to look.
+
+# ── the node hubot will talk to ─────────────────────────────────────────────
+# Not a nav2 node. It exists so this demo has somebody to enforce a limit on;
+# see src/zone_target_demo_node.cpp. On your robot, delete it.
+zone_target_demo:
+  ros__parameters:
+    demo_speed: 1.0
+
+# ── the world, for the costmap's static_layer (see note 2) ──────────────────
+map_server:
+  ros__parameters:
+    topic_name: "map"
+    frame_id: "map"
+    # yaml_filename comes from the launch file, which resolves it inside the
+    # INSTALLED share directory. Nothing here reads the source tree.
+
+# ── the mask, and the info message that tells the filter where to find it ───
+zone_mask_server:
+  ros__parameters:
+    topic_name: "zone_filter_mask"
+    frame_id: "map"
+
+costmap_filter_info_server:
+  ros__parameters:
+    # 4 == hubot::kZoneParameterFilterType (include/hubot/zone_parameter_filter.hpp:64),
+    # which is BINARY_FILTER + 1 and is static_asserted against every nav2 the
+    # package builds on. This is a WIRE DISCRIMINATOR: the filter only has to
+    # agree with whatever this server publishes.
+    type: 4
+    filter_info_topic: "costmap_filter_info"
+    mask_topic: "zone_filter_mask"
+    # base/multiplier are the OccupancyGrid -> filter-space conversion
+    # (nav2_msgs/CostmapFilterInfo). Identity keeps mask cell value == zone id,
+    # which is what makes the mask file legible.
+    base: 0.0
+    multiplier: 1.0
+
+lifecycle_manager:
+  ros__parameters:
+    autostart: true
+    node_names: ["map_server", "zone_mask_server", "costmap_filter_info_server", "/local_costmap/costmap"]
+    # ⚑ 0.0 DISABLES THE BOND CHECK, DELIBERATELY. The standalone costmap binary
+    # sets is_lifecycle_follower_ = false (costmap_2d_ros.cpp:73), so it creates
+    # NO bond to a lifecycle manager. With the default 4.0 the manager
+    # transitions it and then reports it dead. 0.0 makes the manager skip the
+    # bond entirely (nav2_lifecycle_manager/src/lifecycle_manager.cpp:482).
+    # A real nav2 stack keeps the bond; this demo has no supervisor to report to.
+    bond_timeout: 0.0
+
+# ── the costmap that hosts the filter (see note 3 for the doubled key) ──────
+local_costmap:
+  costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_link
+      # See note 2: rolling is what keeps static_layer declaring a window.
+      rolling_window: true
+      width: 6
+      height: 6
+      resolution: 0.5
+      robot_radius: 0.22
+      transform_tolerance: 1.0
+
+      plugins: ["static_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_topic: "/map"
+        subscribe_to_updates: false
+
+      filters: ["zone_filter"]
+      zone_filter:
+        plugin: "hubot::ZoneParameterFilter"
+        enabled: true
+        # Mandatory: the base class declares it with NO default
+        # (nav2_costmap_2d/plugins/costmap_filters/costmap_filter.cpp:75-76), so
+        # omitting it throws rather than falling back to anything.
+        filter_info_topic: "/costmap_filter_info"
+        transform_tolerance: 0.5
+        # Short so a run observes the deadline without a long wall clock. hubot's
+        # own default is 5.0; raise it back when timing itself is the subject.
+        set_parameters_timeout: 3.0
+        liveness_period: 0.5
+        costmap_silence_timeout: 2.0
+
+        states: ["slow_zone"]
+        slow_zone:
+          # The pixel value painted in maps/zone_mask.pgm. Through nav2's own
+          # map_server in `mode: raw`, usable ids are 1..100 — anything above
+          # 100 is clamped to -1 and hubot then treats the cell as UNKNOWN.
+          id: 1
+          setpoints: ["cap_speed"]
+          cap_speed:
+            # ⚑ ABSOLUTE, WITH THE LEADING SLASH, AND THAT IS LOAD-BEARING.
+            # rclcpp::AsyncParametersClient builds the service name as
+            # `<node>/set_parameters` and hands that RELATIVE name to
+            # rcl_node_resolve_name, which expands it against THE OWNING NODE'S
+            # namespace. The owning node here is /local_costmap/costmap, so a
+            # bare `zone_target_demo` would build a client for
+            #     /local_costmap/zone_target_demo/set_parameters
+            # against a target that lives at /zone_target_demo. Nothing arrives,
+            # and the only thing that notices is the deadline — which reports a
+            # timeout rather than the name.
+            # params/examples/overlay_target_inside_namespace.yaml reproduces the MIRROR of
+            # this on purpose -- a target INSIDE /local_costmap can no longer be named
+            # relatively at all -- so you can see it once instead of debugging it once.
+            #
+            # ON YOUR ROBOT this is your controller: node "/controller_server",
+            # parameter "FollowPath.max_vel_x".
+            node: "/zone_target_demo"
+            parameter: "demo_speed"
+            value: 0.3
+
+        # ⚑ NOT CONFIGURED HERE, AND THE OMISSION IS DELIBERATE.
+        # `nominal_defaults` is what gets restored when the robot leaves every
+        # zone. hubot reads `<filter>.nominal_defaults` as a string ARRAY and
+        # `<filter>.nominal_defaults.<name>.node` as children of that same key
+        # (src/zone_parameter_filter.cpp). In a ROS 2 parameter file one key
+        # cannot be both a sequence and a mapping, and NO form of it has been
+        # proven to load from YAML. Shipping an unverified block here would be
+        # shipping the defect this package exists to name. Set them from the
+        # command line, where the dotted names are exactly what the code reads,
+        # until a file form is measured.

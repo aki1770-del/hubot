@@ -53,6 +53,7 @@ HONEST BOUNDS -- what this does NOT do, stated here rather than discovered later
 Usage:  prose_matches_tree.py [ROOT]      run the checks   (exit 1 on any RED)
         prose_matches_tree.py --selftest  prove each check can FAIL
 """
+import ast
 import io
 import os
 import re
@@ -60,6 +61,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.dom.minidom
 
 SRC = "src/zone_parameter_filter.cpp"
 PKG = "package.xml"
@@ -67,6 +69,13 @@ CHG = "CHANGELOG.md"
 RDM = "README.md"
 CML = "CMakeLists.txt"
 DOCDIR = "doc"
+
+# --- CHK-6/7/8: the BRING-UP the package ships. A launch file, its parameters and its
+# maps are only real if they PARSE and if `install()` actually puts them in the install
+# space -- the launch file resolves everything through
+# get_package_share_directory('hubot') and can read nothing else. ---
+SHIP_DIRS = ("launch", "params", "maps")
+XML_FILES = (PKG, "hubot_plugins.xml")
 
 # --- CHK-4: operator sentences this project has RETIRED. Prose still carrying one of
 # these is quoting a sentence the binary no longer emits. Append on every reword. ---
@@ -392,6 +401,83 @@ def run_checks(root):
                     if hits else
                     "%d literals across %d failure-sentence functions, no forbidden token"
                     % (len(lits), found)))
+
+    # ---- CHK-6  every XML and Python file this package ships actually parses ----
+    # ⚑ THIS CHECK EXISTS BECAUSE A WARNING DID NOT WORK. package.xml carries a comment
+    # saying, in its own words, that XML forbids a double hyphen inside a comment and
+    # that an earlier draft had "used the flag's real spelling and made package.xml
+    # unparseable". On 2026-09-06 the very next person to edit that file broke it the
+    # same way THREE TIMES in one sitting, twice within twenty lines of the warning.
+    # A rule that is written, read and even quoted still does not fire; only a check
+    # the author cannot decline does. Stdlib only -- no new dependency, so this runs on
+    # the ROS-free host the toolchain-free lane was written for.
+    broke = []
+    for rel in XML_FILES:
+        fp = os.path.join(root, rel)
+        if not os.path.isfile(fp):
+            broke.append("%s: MISSING" % rel)
+            continue
+        try:
+            xml.dom.minidom.parse(fp)
+        except Exception as e:            # noqa: BLE001 - any parse failure is the finding
+            broke.append("%s: %s" % (rel, e))
+    pys = []
+    for d in SHIP_DIRS:
+        dd = os.path.join(root, d)
+        if os.path.isdir(dd):
+            pys += [os.path.join(d, n) for n in sorted(os.listdir(dd)) if n.endswith(".py")]
+    for rel in pys:
+        try:
+            ast.parse(read(root, rel))
+        except Exception as e:            # noqa: BLE001
+            broke.append("%s: %s" % (rel, e))
+    res.append(("CHK-6", not broke,
+                "a shipped XML/Python file does not parse -> " + "; ".join(broke)
+                if broke else
+                "%d XML + %d Python files parse" % (len(XML_FILES), len(pys))))
+
+    # ---- CHK-7  every shipped YAML parses (UNVERIFIED where pyyaml is absent) ----
+    # Tri-state on purpose, the same way CHK-2T is: pyyaml is NOT stdlib, and this file
+    # promises to run "anywhere, with nothing installed". Reporting GREEN on a host that
+    # could not open a single one of these files would be the absent-verdict-reads-as-a-
+    # pass defect, inside the gate built to catch it.
+    yamls = []
+    for d in SHIP_DIRS:
+        for dirpath, _dirs, names in os.walk(os.path.join(root, d)):
+            yamls += [os.path.join(dirpath, n) for n in sorted(names) if n.endswith(".yaml")]
+    try:
+        import yaml as _yaml
+    except ImportError:
+        res.append(("CHK-7", None,
+                    "pyyaml is not installed here, so the %d shipped .yaml files were "
+                    "NOT parsed. UNVERIFIED is not cleared." % len(yamls)))
+    else:
+        ybad = []
+        for fp in yamls:
+            try:
+                _yaml.safe_load(open(fp, encoding="utf-8"))
+            except Exception as e:        # noqa: BLE001
+                ybad.append("%s: %s" % (os.path.relpath(fp, root), e))
+        res.append(("CHK-7", not ybad,
+                    "a shipped .yaml does not parse -> " + "; ".join(ybad) if ybad else
+                    "%d shipped .yaml files parse" % len(yamls)))
+
+    # ---- CHK-8  what the tree ships, install() actually installs ----
+    # ⚑ THE DIFFERENCE BETWEEN COMMITTED AND SHIPPED, AS A CHECK. A launch file, its
+    # params and its maps that exist in git but are named by no install(DIRECTORY ...)
+    # rule are invisible to `ros2 launch`: the integrator gets "file not found" for a
+    # file she can plainly see in the repository. That failure costs a container run to
+    # discover and costs nothing to catch here.
+    cml = read(root, CML)
+    installed_dirs = set()
+    for m in re.finditer(r"install\s*\(\s*DIRECTORY([^)]*)\)", cml):
+        installed_dirs.update(re.findall(r"[A-Za-z0-9_./]+", m.group(1)))
+    missing = [d for d in SHIP_DIRS
+               if os.path.isdir(os.path.join(root, d)) and d not in installed_dirs]
+    res.append(("CHK-8", not missing,
+                "directory exists in the tree and NO install(DIRECTORY) rule ships it, so "
+                "ros2 launch cannot read it -> " + "; ".join(missing) if missing else
+                "every shipped directory that exists is named by an install() rule"))
     return res
 
 
@@ -426,6 +512,17 @@ MUTATIONS = [
     ("SC-11", SRC, lambda t: t.replace(
         '"is the place to look.";',
         '"is the place to look. Stop the robot.";', 1)),
+    # ⚑ THE CONTROL IS THE DEFECT ITSELF. This inserts a double hyphen inside an XML
+    # comment in package.xml -- the exact break that happened three times on 2026-09-06.
+    # If this mutation does not turn CHK-6 red, CHK-6 would not have caught it either.
+    ("CHK-6", PKG, lambda t: t.replace("maps/. These are exec_depend",
+                                       "maps/. " + "-" * 2 + " These are exec_depend", 1)),
+    ("CHK-7", "params/zone_filter_demo.yaml",
+     lambda t: t + "\nthis: is: not: valid: yaml:\n  - [unclosed\n"),
+    # Removes `maps` from the install rule: the files stay in git and vanish from the
+    # install space, which is the failure a reader cannot see by looking at the tree.
+    ("CHK-8", CML, lambda t: t.replace("install(DIRECTORY launch params maps DESTINATION",
+                                       "install(DIRECTORY launch params DESTINATION", 1)),
 ]
 
 

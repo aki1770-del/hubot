@@ -1,0 +1,36 @@
+# NEGATIVE CONTROL — the target REFUSES the set.
+#
+#   ros2 launch hubot zone_filter_demo_launch.py \
+#     overlay:=overlay_target_readonly.yaml
+#
+# WHAT THIS CONDITION IS. The base config points at `demo_speed`, which
+# zone_target_demo declares writable, so the set lands, that process logs
+#   "set_parameters ARRIVED HERE: demo_speed -> 0.3"
+# and the filter reports `enforced: yes`.
+#
+# This overlay points at `readonly_speed` instead, which the same process
+# declares read_only. rclcpp refuses it BEFORE any callback in that process runs,
+# so the target logs NOTHING — and a genuine refusal then looks, from the wire,
+# exactly like a set that never arrived. Distinguishing those two is the whole of
+# what hubot reports, so this is the condition its report exists for.
+#
+# WHAT TO LOOK FOR — the difference is the evidence, not either run alone:
+#
+#   base run     /zone_decision  ->  enforced: yes
+#                target log      ->  "set_parameters ARRIVED HERE: demo_speed"
+#   this overlay /zone_decision  ->  enforced: NO, naming the target
+#                target log      ->  nothing
+#
+# ⚑ THIS IS THE POLARITY THE HARNESS THIS CAME FROM USED THE OTHER WAY ROUND.
+# There, read_only was the base and writable was the overlay, because the harness
+# existed to find defects. Here the base is the one that WORKS, because a shipped
+# demo's first run should end in a working stack; the failure is the thing you
+# opt into. Deliberate, and stated so nobody reconciles the two files by guessing.
+
+local_costmap:
+  costmap:
+    ros__parameters:
+      zone_filter:
+        slow_zone:
+          cap_speed:
+            parameter: "readonly_speed"

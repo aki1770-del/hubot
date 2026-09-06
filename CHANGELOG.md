@@ -5,6 +5,62 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
 ## [Unreleased]
 
 ### Added
+- ⚑ **THE BRING-UP. `launch/`, `params/`, `params/examples/` and `maps/` — the four things
+  the package told the integrator to build for herself.** A nav2 costmap filter needs five
+  things before it can run at all: the plugin, a filter mask, a `map_server` publishing it, a
+  `costmap_filter_info_server`, and params plus a launch file wiring them together. Until now
+  this package shipped **the first only**, and the page said so as if it were a bound rather
+  than a gap. `ros2 launch hubot zone_filter_demo_launch.py` now brings the filter up inside
+  nav2's own `Costmap2DROS` and reaches `enforced: yes`, with everything resolved out of the
+  **install space** — the launch file reads `get_package_share_directory('hubot')` and can
+  reach nothing in a source tree.
+  - **It ships two CONTROLS, not a demo.** `overlay_target_readonly.yaml` (the target refuses
+    the set) and `overlay_target_inside_namespace.yaml` (the set never arrives) both end in
+    `enforced: NO`, for different reasons, with different sentences. A value with no control
+    beside it is not evidence — the package's own argument, now applied to its own demo.
+  - ⚑ **The second control was WRONG when written and the run is what caught it.** It first
+    named a ROOT target relatively and claimed that reproduced a namespace miss. Measured
+    2026-09-06: `enforced: yes`, `arrivals=1`. The relative-name case is **cured** on this
+    tree — `joinWithParentNamespace()` maps it to `/zone_target_demo` — and a control that
+    asserts a failure the package already fixed teaches a defect that no longer exists and
+    makes a working package look broken. Replaced by the case that IS live: **PI-16's mirror**,
+    a target genuinely inside `/local_costmap` which can no longer be named relatively at all.
+    Measured: `enforced: NO` naming `/costmap`, the phantom node the join produces, while
+    `ros2 param set /local_costmap/costmap robot_radius 0.5` externally succeeds. **PI-16 is
+    now not merely disclosed in prose; it is reproducible in one command.**
+  - **The mask is PLAIN TEXT, and it is its own documentation.** `maps/zone_mask.pgm` is an
+    ASCII `P2` PGM: checked in, so nothing has to be generated; readable, diffable and
+    editable in any text editor, so it is not the binary-in-the-tree defect either. nav2's own
+    example masks are GIMP-written `P5` binaries; this one loads through the same `map_server`
+    and a reader can see every zone id. Verified by running it, not by reasoning about it.
+  - **`nominal_defaults` is set from the launch file and this is the first form ever measured
+    to load.** README warning 1 — that the block cannot be written as nested yaml and the
+    dotted form is untested — is unchanged for a *parameter file*. As launch-file node
+    parameters the dotted names load and are consumed: `1 nominal default(s) loaded for
+    state-0 reset`, up from `0`, and the out-of-zone case now actually restores (`arrivals`
+    0 → 1) instead of reporting `enforced: yes` for a state that put nothing back.
+  - **`src/zone_target_demo_node.cpp`** — the node the filter talks to. hubot does not set a
+    variable; it sends `set_parameters` to another process. A bring-up with no target cannot
+    reach `enforced: yes` at all, so shipping one is the precondition for the falsifier, not
+    scope creep. On a robot this is `controller_server` and `FollowPath.max_vel_x`.
+  - **`nav2_map_server` and `nav2_lifecycle_manager` are declared `exec_depend`**, runtime-only:
+    the filter library links neither and building does not need them. An integrator who wants
+    only the plugin `.so` can take the build dependencies alone.
+- ⚑ **`prose_matches_tree.py` CHK-6, CHK-7, CHK-8 — because a warning did not work, three
+  times, in one sitting.** `package.xml` carries a comment saying in its own words that XML
+  forbids a double hyphen inside a comment and that an earlier draft *"used the flag's real
+  spelling and made package.xml unparseable"*. The next person to edit that file broke it the
+  same way **three times on 2026-09-06**, twice within twenty lines of the warning. A rule
+  that is written, read, and even quoted back still does not fire; only a check the author
+  cannot decline does.
+  - **CHK-6** every shipped XML and Python file parses (stdlib only, so the toolchain-free
+    lane keeps its promise). **CHK-7** every shipped `.yaml` parses, reporting UNVERIFIED
+    rather than GREEN where `pyyaml` is absent. **CHK-8** every directory that exists in the
+    tree is named by an `install()` rule — the difference between *committed* and *shipped*,
+    which otherwise costs a container run to discover.
+  - All three carry negative controls in `--selftest`, and **CHK-6's control is the defect
+    itself**: it inserts a double hyphen into a `package.xml` comment. 14 of 14 controls prove
+    their check behaves as claimed.
 - ⚑ **`test/namespaced_target_resolution_test.cpp` — the fixture that was recorded as
   structurally impossible, and was not.** The relative-`node:` finding was measured only in a
   real multi-process stack and written up as *"structurally invisible to every in-process

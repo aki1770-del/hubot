@@ -58,6 +58,31 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
 
+  <!-- ⚑ RUNTIME-ONLY, ADDED 2026-09-06 (CPP) alongside launch/, params/ and
+       maps/. These are exec_depend and NOT depend on purpose: the filter
+       library links none of them and building this package does not need them.
+       They are what `ros2 launch hubot zone_filter_demo_launch.py` starts.
+       An integrator who wants only the plugin .so on a target can take the
+       build dependencies alone, with rosdep's from-paths and dependency-types
+       flags (spelled without their leading double hyphens here, because XML
+       forbids one inside a comment and the note 20 lines above this one says
+       so: this draft made that exact mistake and package.xml would not parse):
+           rosdep install [from-paths] src [dependency-types]=build
+       Declaring them is the honest cost of shipping a bring-up that works;
+       omitting them would have made the launch file fail on a stranger's
+       machine with an error naming a package this manifest never mentioned,
+       which is the exact defect corrected in nav2_util/nav2_ros_common above. -->
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <!-- tf2_ros is deliberately NOT repeated here. It is already a full
+       `depend` above (the test targets link tf2_ros::tf2_ros), and catkin_pkg
+       rejects the pair outright: "The generic dependency on 'tf2_ros' is
+       redundant with: exec_depend". That is a HARD manifest parse failure, not
+       a warning, so the package does not configure. The launch file's two
+       static_transform_publisher nodes come from that same `depend`. -->
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
   <test_depend>ament_cmake_gtest</test_depend>
