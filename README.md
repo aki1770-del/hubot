@@ -514,11 +514,10 @@ verbatim in the source, and is the reason the reporting surface exists at all.
 Findings raised on the upstream filter by nav2's maintainer are **not fixed upstream** by
 anything in this package — if you run the upstream filter, those remain its business.
 
-⚑ **But three of them describe a design this package SHARES, and saying otherwise was wrong.**
-They were checked one by
-one against this source instead, and the result is a table in `doc/SPEC_COVERAGE.md` §4 giving a
+Three of them describe a design this package shares. They were checked one by
+one against this source, and the result is a table in `doc/SPEC_COVERAGE.md` §4 giving a
 verdict and its evidence for each. In short: the `reset()`/`deactivate()` conflation **is here**
-and cannot be fixed the way he prescribed, because `CostmapFilter::reset()` is `final`; the
+and cannot be fixed by overriding, because `CostmapFilter::reset()` is `final`; the
 event-topic ordering gap **was here and is fixed**; the parameter-client rebuild **is here**,
 with its discovery-race consequence **UNVERIFIED, not cleared**; and the re-apply arming window
 **cannot occur here** because there is no re-apply mechanism at all. Each of those verdicts has a
