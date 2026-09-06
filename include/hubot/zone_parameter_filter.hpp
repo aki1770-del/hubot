@@ -547,10 +547,20 @@ protected:
 //        order already gives.)
 //
 //        UNTIL THAT LANDS UPSTREAM, the integrator guidance is unchanged and
-//        still required: subscribe to `zone_decision` and refuse to drive on
-//        `enforced: NO` or `enforced: pending`. Not because the stack cannot
+//        still required: subscribe to `zone_decision` and
+//        **PROCEED ONLY ON `enforced: yes`.** Not because the stack cannot
 //        carry the signal -- it can -- but because the nav2 you link against
 //        today still erases it. The filter reports; it cannot stop anything.
+//
+//        ⚑ CORRECTED 2026-09-06. This line read "refuse to drive on
+//        `enforced: NO` or `enforced: pending`" until now -- A BLACKLIST, and
+//        the package's own CHANGELOG had already declared that exact form
+//        BREAKING and named its hazard: a consumer coded literally against it
+//        reads the fourth value `unknown` AS PERMISSION, and drives a zone
+//        nobody is watching. The whitelist correction reached the README and
+//        AoU-2 below and MISSED THIS LINE -- which is the line an integrator
+//        reads first, in the header they compile against. Found by DIA, not by
+//        the pen that wrote the correction. See AoU-2 for the full vocabulary.
 //
 // AoU-2  `enforced: yes` MEANS EVERY TARGET OF THE CURRENT STATE CONFIRMED.
 //        `pending` means requested and unanswered. `NO` means at least one
