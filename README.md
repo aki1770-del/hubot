@@ -4,13 +4,16 @@
 — the part that matters — **it tells a person, in words, when a limit was asked for and
 you do not yet know whether it took.**
 
-<!-- OBTAIN-LINE: no remote exists yet. When one does, the clone command replaces the
-     paragraph immediately below. Nothing else on this page has to move. -->
+<!-- OBTAIN-LINE: the remote now exists and is EMPTY. When the pre-push blockers clear and
+     the code is pushed, the paragraph below is replaced by the clone command. Nothing else
+     on this page has to move. -->
 
-⚑ **You cannot obtain this yet.** This repository has no remote and no published release.
-The build instructions below are accurate and the package builds; there is currently no
-URL to clone from. That is the honest state of it, and it is the first thing you should
-know before spending any more of your time here.
+⚑ **The repository exists and the code is not in it yet.** `https://github.com/aki1770-del/hubot`
+was created on 2026-09-06 and is **empty** — no commits, no release. The build instructions below
+are accurate and the package builds and passes against a released nav2 in a clean room, but
+**there is nothing at that URL to clone today.** That is the honest state of it, and it is the
+first thing you should know before spending any more of your time here. What stands between the
+two is listed in the changelog under Unreleased; none of it is a defect in the code.
 
 **Three more bounds, before the pitch rather than after it:**
 
