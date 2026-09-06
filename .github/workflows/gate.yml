@@ -50,56 +50,48 @@ jobs:
     timeout-minutes: 40
     container:
       image: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
+      # ⚑ NO `options: --init` HERE, AND THE OMISSION IS THE RULING.
+      # The first CI run's launch job refused before its first case, over three zombies
+      # (2x map_server, 1x nav2_costmap_2d, all <defunct>) left un-reaped because a
+      # container whose PID 1 is a shell reaps no orphans. Three fixes were possible:
+      #   `--init`      -- gives PID 1 a reaper. Removes the zombies, but it is a property
+      #                    of HOW THE CONTAINER WAS STARTED. test/launch_gate.sh has to be
+      #                    right when a contributor runs it on her laptop with no container
+      #                    at all, so this cannot be the fix; at best it hides the bug here
+      #                    while leaving it live for her.
+      #   teardown wait -- CANNOT WORK. A process may only wait() for its own children.
+      #                    The zombies are the launch file's children, reparented to PID 1
+      #                    when their parent died. They were never ours to reap.
+      #   the predicate -- the guard asks the wrong question. A defunct process holds no
+      #                    sockets and joins no DDS graph; it cannot contaminate the count
+      #                    the guard protects. Narrowed to LIVE processes, with a control
+      #                    in each direction (a live survivor still refuses; a real zombie
+      #                    does not, and the control fails if no zombie was created).
+      # The predicate is the fix and it is verified both ways. `--init` is not added on top
+      # because it is an untested change to how the container starts, and an untested change
+      # is precisely what made this job red in the first place. It stays available if
+      # zombie accumulation is ever shown to matter -- it has not been.
     steps:
-      - name: substrate — released nav2 from packages.ros.org
+      # Only git+curl, so `actions/checkout` gets a real .git (CHK-2T reads a tag) and
+      # so the composite action below can fetch the ROS key. Everything else -- and in
+      # particular every ROS package -- comes from .github/actions/ros-substrate, which
+      # both jobs share so that neither can drift from the other again.
+      - name: bootstrap (git, so checkout is a real clone)
         run: |
           set -eux
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
             ca-certificates curl gnupg git
-          . /etc/os-release
-          curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-            -o /usr/share/keyrings/ros.key
-          echo "deb [signed-by=/usr/share/keyrings/ros.key] http://packages.ros.org/ros2/ubuntu $VERSION_CODENAME main" \
-            > /etc/apt/sources.list.d/ros2.list
-          apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-            build-essential cmake python3-colcon-common-extensions python3-yaml procps \
-            ros-lyrical-nav2-costmap-2d ros-lyrical-nav2-util ros-lyrical-nav2-ros-common \
-            ros-lyrical-nav2-msgs ros-lyrical-ament-cmake-gtest ros-lyrical-ament-lint-auto \
-            ros-lyrical-ament-lint-common ros-lyrical-rmw-fastrtps-cpp ros-lyrical-tf2-ros
-          rm -rf /var/lib/apt/lists/*
-
-      # ⚑ WHAT WE ARE BUILDING AGAINST, RECORDED RATHER THAN ASSUMED.
-      # packages.ros.org is a MOVING feed and the deb version is deliberately NOT
-      # pinned: pinning it turns the day the feed rotates into a RED the contributor
-      # cannot fix, and handing her an unfixable failure is the thing this workflow
-      # exists to stop. The cost of not pinning is that the substrate can drift under
-      # us — so it is PRINTED on every run, into the summary, where a drift is visible
-      # to a human instead of silent.
-      - name: record the substrate
-        run: |
-          set -eu
-          {
-            echo "### substrate"
-            echo '```'
-            . /etc/os-release; echo "os        : $PRETTY_NAME ($VERSION_CODENAME) $(dpkg --print-architecture)"
-            for p in nav2-costmap-2d nav2-util nav2-ros-common nav2-msgs; do
-              echo "$p: $(dpkg -s ros-lyrical-$p | awk -F': ' '/^Version/{print $2}')"
-            done
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/checkout@v5
         with:
-          # CHK-2T reads the highest semver tag reachable from HEAD. Without the
-          # history and tags it degrades to UNVERIFIED — which the gate reports
-          # honestly rather than treating as a pass — but give it what it needs.
           fetch-depth: 0
           fetch-tags: true
 
       - name: git safe.directory (checkout runs as root in this container)
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: ./.github/actions/ros-substrate
 
       - name: build
         shell: bash
@@ -194,34 +186,48 @@ jobs:
     timeout-minutes: 45
     container:
       image: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
+      # ⚑ NO `options: --init` HERE, AND THE OMISSION IS THE RULING.
+      # The first CI run's launch job refused before its first case, over three zombies
+      # (2x map_server, 1x nav2_costmap_2d, all <defunct>) left un-reaped because a
+      # container whose PID 1 is a shell reaps no orphans. Three fixes were possible:
+      #   `--init`      -- gives PID 1 a reaper. Removes the zombies, but it is a property
+      #                    of HOW THE CONTAINER WAS STARTED. test/launch_gate.sh has to be
+      #                    right when a contributor runs it on her laptop with no container
+      #                    at all, so this cannot be the fix; at best it hides the bug here
+      #                    while leaving it live for her.
+      #   teardown wait -- CANNOT WORK. A process may only wait() for its own children.
+      #                    The zombies are the launch file's children, reparented to PID 1
+      #                    when their parent died. They were never ours to reap.
+      #   the predicate -- the guard asks the wrong question. A defunct process holds no
+      #                    sockets and joins no DDS graph; it cannot contaminate the count
+      #                    the guard protects. Narrowed to LIVE processes, with a control
+      #                    in each direction (a live survivor still refuses; a real zombie
+      #                    does not, and the control fails if no zombie was created).
+      # The predicate is the fix and it is verified both ways. `--init` is not added on top
+      # because it is an untested change to how the container starts, and an untested change
+      # is precisely what made this job red in the first place. It stays available if
+      # zombie accumulation is ever shown to matter -- it has not been.
     steps:
-      - name: substrate — released nav2, plus what a bring-up needs
+      # Only git+curl, so `actions/checkout` gets a real .git (CHK-2T reads a tag) and
+      # so the composite action below can fetch the ROS key. Everything else -- and in
+      # particular every ROS package -- comes from .github/actions/ros-substrate, which
+      # both jobs share so that neither can drift from the other again.
+      - name: bootstrap (git, so checkout is a real clone)
         run: |
           set -eux
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
             ca-certificates curl gnupg git
-          . /etc/os-release
-          curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-            -o /usr/share/keyrings/ros.key
-          echo "deb [signed-by=/usr/share/keyrings/ros.key] http://packages.ros.org/ros2/ubuntu $VERSION_CODENAME main" \
-            > /etc/apt/sources.list.d/ros2.list
-          apt-get update -qq
-          # ⚑ costmap_filter_info_server IS NOT A PACKAGE. It is an executable inside
-          # nav2_map_server. Anyone assembling this from a package list will look for
-          # ros-lyrical-nav2-costmap-filter-info-server, fail to find it, and conclude
-          # the released feed cannot bring a costmap filter up. It can.
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-            build-essential cmake python3-colcon-common-extensions python3-yaml procps \
-            ros-lyrical-nav2-costmap-2d ros-lyrical-nav2-util ros-lyrical-nav2-ros-common \
-            ros-lyrical-nav2-msgs ros-lyrical-ament-cmake-gtest ros-lyrical-ament-lint-auto \
-            ros-lyrical-ament-lint-common ros-lyrical-rmw-fastrtps-cpp ros-lyrical-tf2-ros \
-            ros-lyrical-nav2-map-server ros-lyrical-nav2-lifecycle-manager \
-            ros-lyrical-ros2launch ros-lyrical-ros2topic ros-lyrical-ros2param
-          rm -rf /var/lib/apt/lists/*
 
       - uses: actions/checkout@v5
-      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: git safe.directory (checkout runs as root in this container)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: ./.github/actions/ros-substrate
 
       - name: build into an install space
         shell: bash
@@ -245,6 +251,14 @@ jobs:
       # TO PASS. --selftest asserts a knowingly WRONG expectation on the read-only
       # overlay case and requires the gate to report DID NOT REPRODUCE. If this step
       # goes green, the launch gate below is blind and its pass means nothing.
+      # ⚑ THE GUARD THAT REFUSED ON THE FIRST CI RUN NOW PROVES ITSELF, BOTH WAYS, HERE.
+      # A narrowed guard is how a guard becomes a no-op. This spawns a real live process
+      # (must be refused) and a real zombie (must not be), and fails if the zombie was
+      # never actually created -- an untested negative half is not a passing one.
+      - name: negative control — the contamination guard, both directions
+        shell: bash
+        run: bash /ws/src/hubot/test/launch_gate.sh . --selftest-contamination
+
       - name: negative control — the launch gate must be able to fail
         shell: bash
         env:

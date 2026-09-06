@@ -44,6 +44,131 @@ R="$LOGS/RESULT.txt"; : > "$R"
 say(){ echo "$*" | tee -a "$R"; }
 FAILED=0
 
+# ⚑ THE PREDICATE AND ITS CONTROLS SIT ABOVE THE ROS CHECKS ON PURPOSE: they test
+# process bookkeeping, not a built workspace, so a contributor can run
+#   test/launch_gate.sh . --selftest-contamination
+# on a bare machine with nothing installed and see the guard prove itself.
+
+# ⚑ THE GUARD REFUSES TO RUN WITHOUT ITS INSTRUMENT, RATHER THAN PASSING WITHOUT IT.
+# The contamination check below is built on ps/pgrep, in `procps`, which is NOT present
+# in a bare ubuntu:26.04. With them absent the check would report CLEAN on every call --
+# a contamination check quietly turned into a no-op while still printing a reassuring
+# line. An absent verdict must never read as a pass.
+for _t in ps pgrep; do
+  command -v "$_t" >/dev/null || {
+    say "ENVIRONMENT-INCOMPLETE: $_t absent (package: procps)."
+    say "  This gate's contamination check is built on it. Without it the check would"
+    say "  report CLEAN unconditionally, so this gate refuses rather than measuring blind."
+    exit 3; }
+done
+
+# Processes that would genuinely contaminate the next case if they were still running.
+# ⚑ EVERY ALTERNATIVE'S FIRST CHARACTER IS BRACKETED, AND THAT IS NOT DECORATION.
+# `ps ... | grep -E "$PROCPAT"` puts the pattern into the grep's OWN command line, which
+# `ps` then lists, which the grep then matches -- the instrument counting itself. Measured
+# 2026-09-07: the predicate reported 2 survivors on an idle host with nothing spawned, and
+# the two were its own grep. A guard with a permanent non-zero floor refuses forever.
+# `[n]av2_costmap_2d` matches the string "nav2_costmap_2d" and does NOT match the literal
+# "[n]av2_costmap_2d" sitting in the grep's argv, so the instrument drops out of its own
+# measurement. The bare form is kept below for the human reader.
+#   readable: zone_target_demo_node|nav2_costmap_2d|map_server|lifecycle_manager|ros2 launch
+PROCPAT='[z]one_target_demo_node|[n]av2_costmap_2d|[m]ap_server|[l]ifecycle_manager|ros2 [l]aunch'
+
+# ⚑ THE PREDICATE IS *LIVE*, NOT *PRESENT*, AND THIS COST A RED CI RUN TO LEARN.
+# The first version of this guard counted anything pgrep matched. On GitHub's runner the
+# first run reported three survivors before the very first case -- 8175 [map_server]
+# <defunct>, 8176 [map_server] <defunct>, 8178 [nav2_costmap_2d] <defunct>. All three
+# were ZOMBIES: already dead, merely un-reaped, because a container whose PID 1 is a
+# shell reaps no orphans. A defunct process holds no sockets, joins no DDS graph and
+# cannot influence any count -- so the guard refused over a condition that could not
+# contaminate anything, and a gate that refuses on a healthy tree measures as little as
+# one that passes on a broken one.
+# The state column is the discriminator: Linux marks a zombie Z, and `ps` reports it.
+# ⚑ NOT FIXED WITH `--init`, AND NOT WITH A wait() IN TEARDOWN. A reaping init does remove
+# the zombies, but it is a property of HOW THE CONTAINER WAS STARTED, and this script has to
+# be right when a contributor runs it on her own machine with no container at all: a guard
+# whose correctness depends on the caller's runtime flags is a guard that lies on her laptop.
+# A wait() in teardown cannot work at all -- a process may only wait() for its own children,
+# and these are the launch file's children, reparented to PID 1 when their parent died. They
+# were never ours to reap. The predicate is the only fix that is correct everywhere.
+live_survivors(){
+  ps -eo pid=,stat=,args= 2>/dev/null \
+    | awk '$2 !~ /Z/' \
+    | grep -vw "defunct" \
+    | grep -E "$PROCPAT" \
+    | grep -v "launch_gate.sh"
+}
+
+# ⚑ THE PREDICATE CARRIES ITS OWN PROOF, IN BOTH DIRECTIONS.
+# Narrowing a guard is how a guard becomes a no-op, so narrowing it without a control
+# that still fires would be trading one blind gate for another. These two run the real
+# predicate against the two states it must tell apart:
+#   A  a genuinely LIVE process matching the pattern  -> must still refuse
+#   B  a genuine ZOMBIE matching the pattern          -> must NOT refuse
+# Control B creates a real zombie the way the runner did: a child that exits under a
+# parent which never waits.
+selftest_contamination(){
+  local base rc_live rc_zomb zcount out
+  set +m                      # no "Killed" job-control chatter in the transcript
+  say "== contamination predicate, both directions =="
+  base=$(live_survivors | grep -c . || true)
+  say "     host baseline (0 once the predicate stops matching its own grep): $base"
+
+  # ---- A: a genuinely LIVE matching process MUST be refused ----
+  setsid bash -c 'exec -a nav2_costmap_2d_livectl sleep 25' >/dev/null 2>&1 &
+  sleep 2
+  out=$(live_survivors)
+  rc_live=$(( $(printf '%s' "$out" | grep -c . || true) - base ))
+  say "-- A: LIVE process -- live_survivors delta = $rc_live (want >=1)"
+  pkill -f nav2_costmap_2d_livectl >/dev/null 2>&1
+  sleep 2
+
+  # ---- B: a genuine ZOMBIE must NOT be refused ----
+  # ⚑ MAKING A REAL ZOMBIE IS FIDDLIER THAN IT LOOKS, AND TWO EARLIER ATTEMPTS PROVED
+  # NOTHING WHILE APPEARING TO.
+  #   (i)  `exec -a NAME ...` sets argv[0] but NOT comm, and a zombie has an empty
+  #        cmdline -- `ps` then shows the executable's comm, so the fake never carried
+  #        the name at all and zero zombies were created. The control reported a clean
+  #        negative half that had never been exercised.
+  #   (ii) the spawning shell's OWN command line contained the pattern, so the predicate
+  #        matched the live parent and the "zombie was not refused" half failed for a
+  #        reason that had nothing to do with zombies.
+  # Both are the same shape: a control that cannot fail for the reason it claims. This
+  # version copies a real binary to a matching NAME (so comm matches, as `map_server`
+  # did on the runner) and builds that name from fragments so the literal never appears
+  # in the parent's argv.
+  local zdir; zdir=$(mktemp -d)
+  cat > "$zdir/mkzombie.py" <<'PYZ'
+import os, sys, time, shutil
+d = sys.argv[1]
+name = "map_" + "server"            # never appears whole in this process's argv
+path = os.path.join(d, name)
+shutil.copy("/bin/true", path); os.chmod(path, 0o755)
+if os.fork() == 0:
+    os.execv(path, [path])          # child exits immediately
+time.sleep(20)                      # parent never wait()s -> the child stays a zombie
+PYZ
+  setsid python3 "$zdir/mkzombie.py" "$zdir" >/dev/null 2>&1 &
+  sleep 3
+  zcount=$(ps -eo stat=,comm= | awk '$1 ~ /Z/ && $2 == "map_server"' | grep -c . || true)
+  out=$(live_survivors)
+  rc_zomb=$(( $(printf '%s' "$out" | grep -c . || true) - base ))
+  say "-- B: ZOMBIE  -- zombies actually present = $zcount (want >=1); live_survivors delta = $rc_zomb (want 0)"
+  pkill -f "$zdir" >/dev/null 2>&1; rm -rf "$zdir"; sleep 1
+
+  if [ "$rc_live" -ge 1 ] && [ "$zcount" -ge 1 ] && [ "$rc_zomb" -eq 0 ]; then
+    say "     BOTH CONTROLS PASS: a live survivor refuses, a real zombie does not."
+    return 0
+  fi
+  say "     ⚑ CONTROL FAILED. live-delta=$rc_live (want >=1)  zombies-present=$zcount (want >=1)  zombie-delta=$rc_zomb (want 0)"
+  [ "$zcount" -eq 0 ] && say "        No zombie existed, so the negative half proved NOTHING. It did not pass -- it was never tested."
+  return 1
+}
+
+if [ "${2:-}" = "--selftest-contamination" ]; then
+  selftest_contamination; exit $?
+fi
+
 [ -f "$PREFIX/setup.bash" ] || { say "ENVIRONMENT-INCOMPLETE: no setup.bash under $PREFIX"; exit 3; }
 # ⚑ `set -u` OFF ACROSS THE SOURCE, ON PURPOSE. colcon's own setup.bash dereferences
 # COLCON_TRACE unguarded; under `set -u` sourcing it aborts this gate with
@@ -92,27 +217,17 @@ say "maps installed  : $(ls "$SHARE/maps" 2>/dev/null | tr '\n' ' ')"
 #      says so and exits 3 (environment-incomplete) rather than reporting a number it
 #      cannot trust. A harness that silently reports a contaminated count is worse than
 #      one that refuses: the contaminated count looks exactly like a finding.
-# ⚑ THE GUARD REFUSES TO RUN WITHOUT ITS INSTRUMENT, RATHER THAN PASSING WITHOUT IT.
-# assert_clean below is built on pgrep, which is in `procps` and is NOT present in a
-# bare ubuntu:26.04. With pgrep absent, `pgrep ... | wc -l` returns 0 and the guard
-# reports CLEAN on every call — a contamination check that has quietly become a no-op
-# while still printing a reassuring line. Found 2026-09-07 while wiring this into CI,
-# by installing the substrate from scratch rather than reusing one that happened to
-# have procps. An absent verdict must never read as a pass.
-command -v pgrep >/dev/null || {
-  say "ENVIRONMENT-INCOMPLETE: pgrep absent (package: procps)."
-  say "  This gate's contamination check is built on pgrep. Without it the check would"
-  say "  report CLEAN unconditionally, so this gate refuses rather than measuring blind."
-  exit 3; }
 
 DOMAIN=41
 assert_clean(){
-  local lbl="$1" leftover
-  leftover=$(pgrep -f "zone_target_demo_node|nav2_costmap_2d|map_server|lifecycle_manager|ros2 launch" 2>/dev/null | wc -l)
-  if [ "$leftover" -ne 0 ]; then
-    say "⚑ CONTAMINATED before case '$lbl': $leftover process(es) survived the previous case."
+  local lbl="$1" surv n
+  surv=$(live_survivors)
+  n=$(printf '%s' "$surv" | grep -c . )
+  if [ "$n" -ne 0 ]; then
+    say "⚑ CONTAMINATED before case '$lbl': $n LIVE process(es) survived the previous case."
+    say "   Zombies are excluded -- these are running and can join the ROS graph."
     say "   This gate will not report a number it cannot trust. Survivors:"
-    pgrep -af "zone_target_demo_node|nav2_costmap_2d|map_server|lifecycle_manager|ros2 launch" 2>/dev/null | sed 's/^/     /' | tee -a "$R"
+    printf '%s\n' "$surv" | sed 's/^/     /' | tee -a "$R"
     exit 3
   fi
 }
@@ -171,6 +286,7 @@ run_case(){
     FAILED=1
   fi
 }
+
 
 say "== 3. the four cases =="
 if [ $SELFTEST -eq 1 ]; then

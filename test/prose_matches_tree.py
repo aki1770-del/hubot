@@ -542,6 +542,61 @@ def run_checks(root):
                              "report NOTHING" % (wf, ", ".join(miss))) if miss else
                             "%s declares %s; a push and a pull request each run the gate"
                             % (wf, ", ".join(sorted(want)))))
+
+    # ---- CHK-10  no job hand-writes a ROS package list ----
+    # ⚑ THIS CHECK EXISTS BECAUSE THE DEFECT IT GUARDS ALREADY HAPPENED, ON THE FIRST CI
+    # RUN THIS PACKAGE EVER HAD. The workflow's two build jobs each carried their own
+    # hand-written apt list, and the `suite` copy was produced by deleting lines from the
+    # `launch` copy. The deletion took `nav2_map_server` with it, and with it the
+    # transitively-installed `diagnostic_msgs` -- which package.xml:55 declares and
+    # CMakeLists.txt:24 requires. `launch` went green and `suite` died in 1.55 s at
+    # find_package. Two copies of one fact, and only one of them was ever built against.
+    #
+    # The dependencies now come from package.xml via rosdep, inside ONE composite action
+    # both jobs call. This check keeps it that way: a `ros-lyrical-*` written into the
+    # workflow is a second list being born.
+    #
+    # ⚑ THE FIRST DRAFT OF THIS CHECK SPLIT THE WORKFLOW TEXT ON "\n  " TO FIND A JOB'S
+    # BODY -- which is a prefix of every 4-space-indented line, so each body truncated to
+    # nothing and the check reported RED on a tree that was correct. It is parsed now,
+    # not pattern-matched. A check that cries wolf is retired by the people it interrupts.
+    wf10 = os.path.join(".github", "workflows", "gate.yml")
+    actrel = "./.github/actions/ros-substrate"
+    actp = os.path.join(root, ".github", "actions", "ros-substrate", "action.yml")
+    try:
+        import yaml as _y10
+    except ImportError:
+        res.append(("CHK-10", None,
+                    "pyyaml absent, so the workflow could not be parsed. UNVERIFIED is not "
+                    "cleared: this says nothing about whether a second package list exists."))
+    else:
+        problems = []
+        if not os.path.isfile(actp):
+            problems.append("the shared substrate action is missing, so each job must be "
+                            "assembling its own")
+        if not os.path.isfile(os.path.join(root, wf10)):
+            problems.append("%s is absent" % wf10)
+        else:
+            wtxt = read(root, wf10)
+            strays = sorted(set(re.findall(r"ros-lyrical-[a-z0-9-]+", wtxt)))
+            if strays:
+                problems.append("the workflow names ROS packages directly (%s) instead of "
+                                "leaving them to package.xml + rosdep" % ", ".join(strays))
+            try:
+                wdoc = _y10.safe_load(wtxt) or {}
+            except Exception as e:
+                problems.append("%s does not parse (%s)" % (wf10, e))
+                wdoc = {}
+            for job, spec in (wdoc.get("jobs") or {}).items():
+                steps = (spec or {}).get("steps") or []
+                builds = any("colcon build" in (st.get("run") or "") for st in steps)
+                if builds and not any(st.get("uses") == actrel for st in steps):
+                    problems.append("job '%s' builds but does not use the shared substrate "
+                                    "action" % job)
+        res.append(("CHK-10", not problems,
+                    "; ".join(problems) if problems else
+                    "every building job takes its dependencies from package.xml through the "
+                    "one shared substrate action; no ROS package is named in the workflow"))
     return res
 
 
@@ -593,6 +648,13 @@ MUTATIONS = [
     # control does not turn CHK-9 red, CHK-9 would not have noticed the real thing either.
     ("CHK-9", os.path.join(".github", "workflows", "gate.yml"),
      lambda t: t.replace("\n  pull_request:\n", "\n", 1)),
+    # ⚑ THE MUTATION IS THE DEFECT VERBATIM: a ROS package written into a job by hand.
+    # That is how the second list was born the first time, and it stayed green in one job
+    # while killing the other. If this does not turn CHK-10 red, CHK-10 would not have
+    # seen the real one either.
+    ("CHK-10", os.path.join(".github", "workflows", "gate.yml"),
+     lambda t: t.replace("ca-certificates curl gnupg git",
+                         "ca-certificates curl gnupg git ros-lyrical-nav2-costmap-2d", 1)),
 ]
 
 

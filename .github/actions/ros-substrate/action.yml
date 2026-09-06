@@ -1,0 +1,78 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# The substrate, in ONE place, because the last version had it in two.
+#
+# ⚑ WHY THIS IS A COMPOSITE ACTION AND NOT TWO COPIES OF AN apt LINE.
+# The first workflow wrote the package list by hand in each job, and the `suite`
+# job's copy was made by deleting entries from the `launch` job's copy. I measured
+# the launch recipe -- 1.07 GB, 121 s -- and reported that number as if it covered
+# both. It did not. The suite recipe was never built against even once, and on the
+# very first CI run it died in 1.55 s:
+#
+#     CMake Error at CMakeLists.txt:24 (find_package):
+#       Could not find a package configuration file provided by "diagnostic_msgs"
+#
+# diagnostic_msgs is declared at package.xml:55. The package was right; the
+# hand-written list was wrong, and it was wrong in exactly one of its two copies.
+# That is a second copy of a fact that can drift -- the defect this whole package
+# is built to catch, committed inside its own CI.
+#
+# So the list is not written by hand at all any more. `rosdep` reads package.xml
+# and resolves what the manifest actually declares (measured 2026-09-07: 22
+# packages, diagnostic_msgs among them). Add a <depend> and CI installs it. And
+# because both jobs call THIS file, there is no second copy left to diverge.
+# ══════════════════════════════════════════════════════════════════════════════
+name: ros-substrate
+description: Released nav2 from packages.ros.org, with hubot's dependencies resolved from its own package.xml.
+
+runs:
+  using: composite
+  steps:
+    - name: packages.ros.org + rosdep + the ros2 CLI
+      shell: bash
+      run: |
+        set -eux
+        . /etc/os-release
+        curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+          -o /usr/share/keyrings/ros.key
+        echo "deb [signed-by=/usr/share/keyrings/ros.key] http://packages.ros.org/ros2/ubuntu $VERSION_CODENAME main" \
+          > /etc/apt/sources.list.d/ros2.list
+        apt-get update -qq
+        # Build tooling, the gates' own instruments, and the ros2 CLI the launch gate
+        # drives. These are NOT package.xml dependencies -- they are tools -- so they
+        # are named here, and they are named for BOTH jobs so the two substrates stay
+        # byte-identical. procps is load-bearing: without it the launch gate's
+        # contamination check would report CLEAN unconditionally, and it refuses to run.
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+          build-essential cmake python3-colcon-common-extensions python3-rosdep \
+          python3-yaml procps \
+          ros-lyrical-ros2launch ros-lyrical-ros2topic ros-lyrical-ros2param \
+          ros-lyrical-rmw-fastrtps-cpp
+
+    - name: dependencies, resolved FROM package.xml (not from a list we maintain)
+      shell: bash
+      run: |
+        set -eux
+        rosdep init >/dev/null 2>&1 || true
+        rosdep update --rosdistro lyrical
+        rosdep install --from-paths "$GITHUB_WORKSPACE" --ignore-src \
+          --rosdistro lyrical -y
+        rm -rf /var/lib/apt/lists/*
+
+    # ⚑ WHAT WE ARE BUILDING AGAINST, RECORDED RATHER THAN ASSUMED.
+    # packages.ros.org is a MOVING feed and the deb version is deliberately NOT pinned:
+    # pinning turns the day the feed rotates into a RED the contributor cannot fix. The
+    # cost is that the substrate can drift under us, so it is PRINTED every run, where a
+    # human can see a drift instead of it being silent.
+    - name: record the substrate
+      shell: bash
+      run: |
+        set -eu
+        {
+          echo "### substrate"
+          echo '```'
+          . /etc/os-release; echo "os        : $PRETTY_NAME ($VERSION_CODENAME) $(dpkg --print-architecture)"
+          for p in nav2-costmap-2d nav2-util nav2-ros-common nav2-msgs diagnostic-msgs; do
+            echo "$p: $(dpkg -s ros-lyrical-$p 2>/dev/null | awk -F': ' '/^Version/{print $2}')"
+          done
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
