@@ -16,9 +16,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <iomanip>
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -57,6 +59,31 @@ int64_t steadyNowNs()
 /// It is deliberately NOT configurable. The number a consumer reads must not
 /// depend on a setting they cannot see from the message.
 constexpr double kValidForPeriods = 2.5;
+
+/// Format a number of seconds for a sentence a PERSON reads.
+///
+/// \u26d1 `std::to_string(double)` is `"%f"` -- six decimal places, always. So a
+/// twelve-second-old costmap reached an operator as `No costmap update for
+/// 12.000000s`, and it reached a TAG that way: every internal quotation of the
+/// sentence tidies the float away (`doc/SOTIF_PERFORMANCE_INSUFFICIENCY.md:139`
+/// elides it), so the wire text was never once read as it actually ships. A
+/// component whose entire purpose is that a person can read one sentence beside
+/// a moving robot must not spend five of its characters on precision no clock
+/// here has.
+///
+/// One decimal place, which is the resolution the heartbeat itself has.
+///
+/// \u26d1 NOT applied to the `KeyValue` fields (`costmap_age_s`, `valid_for_s`,
+/// `report_period_s`). Those are parsed with `std::stod` by consumer code AND by
+/// this package's own tests against tight thresholds, and rounding a small
+/// positive value up or down at a boundary would change a machine's verdict to
+/// buy a human nothing -- they are data, not a sentence. The split is deliberate.
+std::string humanSeconds(double s)
+{
+  std::ostringstream out;
+  out << std::fixed << std::setprecision(1) << s;
+  return out.str();
+}
 }  // namespace
 
 ZoneParameterFilter::ZoneParameterFilter()
@@ -868,7 +895,7 @@ void ZoneParameterFilter::checkPendingParameterUpdates()
         it = pending_sets_.erase(it);
         markTargetDegraded(
           target,
-          "no answer within " + std::to_string(set_parameters_timeout_) +
+          "no answer within " + humanSeconds(set_parameters_timeout_) +
           "s of the set being issued; an unanswered request is not a "
           "successful one");
         continue;
@@ -1112,16 +1139,42 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
   const double costmap_age = secondsSinceLastProcess();
   if (enforcement_degraded_) {
     st.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+    // ⛑ NAME THE TARGET. This said "on at least one target" -- and the name was
+    // sitting in `event`, behind a click, while the sentence in front of the
+    // operator declined to say it. A component whose stated purpose is to tell a
+    // person what to go and look at must tell her WHAT to look at; "at least
+    // one" sends her to read a second field to find out, next to a robot in
+    // motion, which is the cost this package exists to remove.
+    //
+    // The empty fallback keeps the old wording rather than dereferencing end().
+    // `enforcement_degraded_` is documented as a cache of
+    // `!degraded_targets_.empty()` (hpp:286-287) and is kept in step at three
+    // sites, so the branch should be unreachable -- but this runs on the costmap
+    // thread, where CostmapFilter::updateCosts() is bare and LayeredCostmap has
+    // no try/catch, so an unreachable dereference here is process death.
+    const std::string who =
+      degraded_targets_.empty()
+      ? std::string("at least one target")
+      : (degraded_targets_.size() == 1
+      ? ("target '" + *degraded_targets_.begin() + "'")
+      : (std::to_string(degraded_targets_.size()) + " targets, including '" +
+      *degraded_targets_.begin() + "'"));
     st.message =
       "Zone " + std::to_string(static_cast<int>(current_state_)) +
-      " is NOT being enforced on at least one target. Decide as if the zone's "
+      " is NOT being enforced on " + who + ". Decide as if the zone's "
       "limits are not applied.";
   } else if (mask_state_undeclared_) {
     st.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
     st.message =
       "The mask reports zone " + std::to_string(static_cast<int>(mask_state_)) +
       " at the robot's pose and no state with that id is configured. No limits "
-      "were applied for it; what is in force is still zone " +
+      // ⛑ "is still zone N's" asserts ANOTHER process's CURRENT parameter
+      // state, which this filter cannot read. AoU-4: a confirmed set means the
+      // target accepted the value, not that it still holds it -- anything else
+      // may have set the same parameter since and this filter would not notice.
+      // What we can say is what we last confirmed. One word of over-claim in a
+      // sentence whose whole job is to be believed.
+      "were applied for it; what we last confirmed was zone " +
       std::to_string(static_cast<int>(current_state_)) +
       "'s. Decide as if this zone has no limits.";
   } else if (notWatching()) {
@@ -1139,25 +1192,77 @@ void ZoneParameterFilter::publishDecision(const std::string & detail)
     // "last requested" is FALSE when nothing was ever requested. A message that
     // is true in one branch and false in the other is the same category of
     // defect as a token that is true in one branch and false in the other.
+    //
+    // ⛑ THE SUBJECT, AND THE LIMIT OF WHAT WE MEASURED. Two defects lived in
+    // these two sentences and both ran the same direction -- toward claiming
+    // more than this filter can see.
+    //
+    // (1) Both opened with a bare "NOT WATCHING." At STALE level, beside a robot
+    // in motion, the subject a reader supplies for a verb with none is the
+    // ROBOT. The subject is now written down.
+    //
+    // (2) "because nobody is" and "and nobody is watching" were the over-claim.
+    // What this filter measured is one thing: IT has not been driven. It has no
+    // visibility into the safety scanner, the bumper, the E-stop, the
+    // controller's own collision checking, or the person standing in the
+    // doorway -- and it asserted a fact about all of them. That is a
+    // failure-shaped value overstating danger, the exact inverse of the
+    // success-shaped value this package was written to abolish, and nothing in
+    // the corpus was looking for that sign. A sentence may not assert more than
+    // this filter measured, in EITHER direction.
     st.message =
       ever_processed_ ?
-      ("NOT WATCHING. No costmap update for " + std::to_string(costmap_age) +
+      ("THIS FILTER IS NOT WATCHING. No costmap update for " +
+      humanSeconds(costmap_age) +
       "s. Zone " + std::to_string(static_cast<int>(current_state_)) +
       "'s limits were last requested but nothing has checked them since, and "
-      "the mask is not being sampled. Decide as if nobody is watching, because "
-      "nobody is.") :
-      ("NOT WATCHING. This filter has not been driven even once (" +
-      std::to_string(costmap_age) + "s since it was initialised). It has read "
+      "the mask is not being sampled. Decide as if this zone is unchecked. "
+      "Whether anything else is watching, this filter cannot see.") :
+      // ⛑ FSE-W1. This half publishes at 1 Hz from configure, before the
+      // costmap update thread exists -- so it fires through every ordinary
+      // bringup, when nothing whatever is wrong. It carried an imperative of
+      // exactly the same force as the half that fires an hour after the costmap
+      // died. An imperative that fires when nothing is wrong teaches an operator
+      // to discount the one that fires when something is, and she pays that debt
+      // at 03:00. The standing is now differentiated in the sentence, which is
+      // an epistemic correction (how alarmed to be) and not a hazard ranking.
+      ("THIS FILTER IS NOT WATCHING. It has not been driven even once (" +
+      humanSeconds(costmap_age) + "s since it was initialised). It has read "
       "no mask, applied no state and confirmed nothing, so it knows neither "
       "where the robot is nor what is in force. Decide as if no zone limits "
-      "are being applied and nobody is watching.");
+      "are being applied. Expected in the first moments after configure; if it "
+      "persists, this filter is loaded but is never being called. It is not a "
+      "statement about your other protections.");
   } else if (unconfirmed) {
     st.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    // ⛑ BOUND THE WAIT. This said "Do not rely on its limits until this reads
+    // yes" -- an instruction to wait, with no end on it, published beside a
+    // robot that is moving. There IS an end: set_parameters_timeout, swept by
+    // checkPendingParameterUpdates(), which since 2026-09-06 is driven by the
+    // liveness timer and not only by process(), so it fires with the costmap
+    // stopped. The sentence can name it, and then she knows in advance when to
+    // stop waiting instead of standing there deciding.
+    //
+    // ⛑ AND WHEN THERE IS NO DEADLINE THE SENTENCE MUST SAY SO, not name a
+    // bound that does not exist. `set_parameters_timeout <= 0` is a documented
+    // configuration (:86-102 warns exactly what it gives up): the sweep is
+    // short-circuited, an unanswered set is never marked degraded, and `pending`
+    // genuinely never resolves. Naming the parameter unconditionally would, in
+    // precisely the configuration where the wait IS unbounded, tell her to wait
+    // zero-or-fewer seconds. A bound that goes unsatisfiable in the one case it
+    // was written for is worse than the unbounded sentence it replaced.
+    const std::string deadline =
+      set_parameters_timeout_ > 0.0
+      ? (" A request unanswered for " + humanSeconds(set_parameters_timeout_) +
+      "s is reported as not enforcing rather than left pending.")
+      : std::string(
+        " set_parameters_timeout is switched off on this filter, so a target "
+        "that never answers is never reported and this may never resolve.");
     st.message =
       "Zone " + std::to_string(static_cast<int>(current_state_)) +
       " has been REQUESTED on " + std::to_string(unconfirmed_targets_.size()) +
       " target(s) and none of them has confirmed yet. Do not rely on its "
-      "limits until this reads yes.";
+      "limits." + deadline;
   } else if (current_state_ == 0) {
     st.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
     st.message = "Outside any zone; nominal defaults are in force.";

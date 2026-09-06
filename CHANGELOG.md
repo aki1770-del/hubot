@@ -5,6 +5,63 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
 ## [Unreleased]
 
 ### Added
+- **`test/prose_matches_tree.py` — the prose is now re-derived from the tree, and disagreeing
+  fails.** Four figures about this package's own tests were published at once and no two agreed
+  (`28 of 28`, `23 of 26`, `35 tests`, and a `46` that was `colcon test-result --all` counting a
+  different quantity without saying so); the README cited three `throw` line numbers that had all
+  moved; and `doc/SPEC_COVERAGE.md`'s one-line summary contradicted a measurement printed twenty
+  lines above it in the same file. **Every one was true when written.** Nothing re-derived any of
+  them, so each went false at the next edit — one twice in a single day. Six checks: throw sites,
+  the tag/`package.xml`/CHANGELOG triple, the canonical test counts, retired operator phrasing
+  still published, and FSE's two message oracles. ⚑ **It ships its own negative controls**
+  (`--selftest`) which mutate a copy of the tree once per check and require each to go RED.
+  **The controls earned their keep immediately: SC-9's first control reported STILL GREEN**,
+  because it mutated the first occurrence of a string literal that turns out to live in a comment
+  at `cpp:648` rather than the code at `cpp:1268`. An oracle nobody has watched go red is not
+  evidence that it can.
+
+### Fixed
+- ⚑ **`12.000000s` was reaching the operator, and it reached a tag that way.** `costmap_age` and
+  `set_parameters_timeout` went through `std::to_string(double)`, which is `"%f"` — six decimals.
+  It survived because **every internal quotation of the sentence tidies the float away**
+  (`doc/SOTIF_PERFORMANCE_INSUFFICIENCY.md:139` elides it), so the wire text had never once been
+  read as it ships. New `humanSeconds()` gives one decimal in the sentences a person reads.
+  **Deliberately NOT applied to the `KeyValue` fields** — those are parsed with `std::stod` by
+  consumer code and by this suite against tight thresholds, and rounding at a boundary would
+  change a machine's verdict to buy a human nothing.
+- ⚑ **The two `NOT WATCHING` sentences claimed more than the filter measured — a failure-shaped
+  value overstating danger, the inverse of the defect this package exists to abolish.** *"Decide
+  as if nobody is watching, because nobody is"* asserted a fact about the safety scanner, the
+  bumper, the E-stop, the controller's own collision checking and the person in the doorway. This
+  filter measured exactly one thing: **it** has not been driven. Both branches now say so and
+  stop there. Both also opened with a subjectless *"NOT WATCHING."* — beside a robot in motion
+  the subject a reader supplies is the robot; the subject is now written down.
+- **The loudest imperative fired on every ordinary bringup.** The never-driven branch publishes
+  at 1 Hz from configure, before the costmap update thread exists, and carried an imperative of
+  the same force as the one that fires an hour after the costmap died. An imperative that fires
+  when nothing is wrong teaches an operator to discount the one that fires when something is.
+  The standing is now differentiated in the sentence.
+- **`"Do not rely on its limits until this reads yes"` was an unbounded wait**, published beside
+  a moving robot. It now names the deadline that actually exists (`set_parameters_timeout`,
+  swept by `checkPendingParameterUpdates()`) — **and says the other thing when that deadline is
+  switched off**, which is a documented configuration under which `pending` genuinely never
+  resolves. Naming the parameter unconditionally would have been unsatisfiable in precisely the
+  case the sentence was written for.
+- **`"on at least one target"` now names the target.** The name was sitting in `event`, behind a
+  click, while the sentence in front of the operator declined to say it.
+- **`"what is in force is still zone N's"` asserted another process's current parameter state**,
+  which this filter cannot read. AoU-4: a confirmed set means acceptance, not that it still
+  holds. Now *"what we last confirmed was zone N's."*
+- **`README.md` told the reader the opposite of what the component does.** *"An `OK` from ninety
+  seconds ago renders identically to an `OK` from now"* stood in the present tense; measured on
+  this tree, silence past the budget sets `STALE`, not `OK`. ⚑ **And the residual is not the one
+  you would guess** — `costmap_silence_timeout: 0` does not restore it, because the budget falls
+  back to `liveness_period x 2.5`. The window that genuinely survives is the node dying outright.
+- **Stale citations on shipped surfaces**: the three `throw` sites (`:78`/`:182`/`:251` →
+  `:105`/`:270`/`:339`), `doc/SPEC_COVERAGE.md`'s *"Two of the six"* against its own *"Three of
+  six"* twenty lines later, its *"Build: never attempted"* against its own green build, and
+  `CMakeLists.txt`'s unsourceable *"486 passing tests"* — removed rather than replaced with a
+  guess, because the mechanism carried the argument on its own.
 - **`test/maintainer_findings_test.cpp` — a harness built to the specification of a review we
   already received.** nav2's maintainer found something on all three rounds of review of the
   upstream sibling of this filter, and asked, plainly, *"which maybe you can catch yourself? Not

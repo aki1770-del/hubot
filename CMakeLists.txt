@@ -142,8 +142,11 @@ if(BUILD_TESTING)
   # ⚑ THE MAINTAINER-FINDING HARNESS. Every case drives a SEQUENCE and asserts
   # INSIDE a transient -- between a reset and the mask coming back, between a set
   # being issued and answered. The maintainer's findings all live in sequences;
-  # a value oracle cannot fail on one, which is why 486 passing tests caught none
-  # of them. Its fixture deliberately has NO wait-for-active after a reset,
+  # a value oracle cannot fail on one, which is why a suite that passes every
+  # value check can still catch none of them. (This said "486 passing tests"
+  # until 2026-09-06. Nothing on this tree measures 486 anything, and no surface
+  # says what it counted -- an unsourceable figure carrying an argument the
+  # mechanism carries on its own. Removed rather than replaced with a guess.) Its fixture deliberately has NO wait-for-active after a reset,
   # because the helper that waits for one waits the defect out.
   ament_add_gtest(maintainer_findings_test
     test/maintainer_findings_test.cpp TIMEOUT 300)
@@ -186,6 +189,29 @@ if(BUILD_TESTING)
   add_test(NAME safety_invariants_static
     COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test/safety_invariants_static.sh"
                  "${CMAKE_CURRENT_SOURCE_DIR}")
+
+  # \u26d1 PROSE-AGAINST-TREE. Four figures about this package's own tests were
+  # published at once and no two agreed; the README cited three `throw` lines that
+  # had all moved; and a one-line summary in doc/SPEC_COVERAGE.md contradicted a
+  # measurement printed twenty lines above it in the same file. Every one of them
+  # was true when written. Nothing re-derived any of them, so each went false at
+  # the next edit -- one of them twice in a single day.
+  #
+  # This re-derives them FROM THE TREE and fails when the prose disagrees. It also
+  # carries FSE's two message oracles (SC-9 forbidden-token, SC-10 the
+  # reassuring/degraded imperative asymmetry) because they read the same source.
+  #
+  # It ships its own negative controls: `python3 test/prose_matches_tree.py
+  # --selftest` mutates a COPY of the tree once per check and requires each check
+  # to go RED. A gate nobody has watched fail is not evidence.
+  #
+  # Same toolchain-bound caveat as the block above: this `add_test` is downstream
+  # of sixteen `find_package(... REQUIRED)` calls, so on a ROS-free host cmake
+  # never reaches it. The toolchain-free lane is `python3
+  # test/prose_matches_tree.py`, which needs python3 and nothing else.
+  add_test(NAME prose_matches_tree
+    COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/test/prose_matches_tree.py"
+                    "${CMAKE_CURRENT_SOURCE_DIR}")
 
   ament_add_gtest(survival_harness_test test/survival_harness_test.cpp TIMEOUT 300)
   target_link_libraries(survival_harness_test ${hubot_test_deps})

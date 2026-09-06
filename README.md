@@ -261,8 +261,8 @@ keeps ticking. On that path nothing is swallowed and nothing takes the node down
 
 ⚑ **Scoped 2026-09-06; it used to be unqualified.** Three
 `throw std::runtime_error{"Failed to lock node"}` remain, at
-`src/zone_parameter_filter.cpp:78` (`initializeFilter`), `:182` (`filterInfoCallback`) and
-`:251` (`loadStateConfig`). None is on the `process()` / `updateCosts()` path that this
+`src/zone_parameter_filter.cpp:105` (`initializeFilter`), `:270` (`filterInfoCallback`) and
+`:339` (`loadStateConfig`). None is on the `process()` / `updateCosts()` path that this
 package is about, and the upstream filter carries the same three — but nothing above them
 handles an exception either, so "nothing takes the node down" was more than we had shown.
 
@@ -278,7 +278,7 @@ enforcement failure. Your existing operator tools already render it.
 | field | carries |
 |---|---|
 | `level` | `OK` in force · `WARN` requested but not yet confirmed · `ERROR` when the zone is **not** being enforced · `STALE` when the filter is **not watching** |
-| `message` | a sentence to act on — *"Zone 2 is NOT being enforced on at least one target. Decide as if the zone's limits are not applied."* |
+| `message` | a sentence to act on, **naming the target** — *"Zone 2 is NOT being enforced on target '/controller_server'. Decide as if the zone's limits are not applied."* With more than one: *"...on 3 targets, including '/collision_monitor'."* |
 | `values` | `zone_state`, `mask_state`, `enforced`, `configured`, `unconfirmed_targets`, `degraded_targets`, `pending_parameter_sets`, `targets`, the triggering `event`, and the liveness fields `watching`, `costmap_age_s`, `report_seq`, `report_period_s`, `valid_for_s` |
 
 **`report_period_s`** is how often the next message is due — the heartbeat period actually in
@@ -411,10 +411,24 @@ there, honestly and in full: **if the whole node dies, the last message still st
 
 A costmap filter is only called when the costmap ticks. So if the costmap stopped, this
 filter stopped — and a topic that only speaks when something changes says exactly nothing
-in that case. **An `OK` from ninety seconds ago renders identically to an `OK` from now.**
-You would read *the zone is enforced*. The truth would be *nobody is checking*.
+in that case.
+
+⛑ **THIS PARAGRAPH DESCRIBED THIS PACKAGE UNTIL THE SILENCE DETECTOR EXISTED, AND IT SAID
+THE FOLLOWING IN THE PRESENT TENSE:** *"An `OK` from ninety seconds ago renders identically to
+an `OK` from now. You would read the zone is enforced. The truth would be nobody is checking."*
 
 **That is the failure this package was written to abolish, and it was inside the package.**
+**It is no longer what this component does, and the sentence above was still telling you it
+was.** Measured on this tree: a costmap silent past its budget sets level **`STALE`**, not
+`OK` (`src/zone_parameter_filter.cpp:1189`), and the message becomes *"THIS FILTER IS NOT
+WATCHING."* A ninety-second-old reading does **not** render identically to a fresh one.
+
+⛑ **And the residual is not the one you would guess.** Switching the detector off with
+`costmap_silence_timeout: 0` does **not** restore it: since 2026-09-06 the budget falls back to
+`liveness_period x 2.5` (`src/zone_parameter_filter.cpp:1069-1072`), so `STALE` still fires.
+**The window that genuinely survives is the one no detector inside this process can close — if
+the whole node dies, nothing publishes and the last message stands.** That is what `valid_for_s`
+and the offered `DEADLINE` are for, and it is stated in full above.
 
 **What it does now.** A liveness timer on the node — **not** on the costmap update loop:
 
