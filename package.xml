@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>hubot</name>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
   <description>
     A nav2 costmap filter that applies speed and behaviour limits inside mapped zones and
     tells a person, in words, when a limit was requested and it is not yet known whether it

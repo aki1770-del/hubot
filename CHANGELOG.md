@@ -4,6 +4,10 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
 
 ## [Unreleased]
 
+*Nothing yet.*
+
+## [0.1.1] - 2026-09-07
+
 ### Added
 - ⚑ **THE BRING-UP. `launch/`, `params/`, `params/examples/` and `maps/` — the four things
   the package told the integrator to build for herself.** A nav2 costmap filter needs five
@@ -495,7 +499,7 @@ See **Read this before you deploy it** in `README.md`. In particular:
   `1.5.1` and present only on branches `main` and `lyrical`. Measured 2026-09-06 against
   tag `1.5.1` (`a6354f3f`) from a clean workspace: compile error. Verified to build and
   test green against upstream `lyrical` HEAD `6f23b11c` only.
-  ⚑ **Superseded in [Unreleased], 2026-09-06 — see *"This package now builds against a
+  ⚑ **Superseded in [0.1.1], 2026-09-06 — see *"This package now builds against a
   RELEASED nav2"* under Fixed.** Kept here because it was true of this state when written.
 - This filter cannot signal to the navigation stack that its output is untrustworthy.
 - It has not been run on hardware.

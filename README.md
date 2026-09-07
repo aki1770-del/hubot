@@ -11,9 +11,12 @@ git clone https://github.com/aki1770-del/hubot
 ```
 
 ⚑ **Read the next section before you build it.** The package builds and passes against a released
-`nav2_costmap_2d` in a clean room — **and it has never run on a robot.** `0.1.0` names an earlier
-tree than the default branch; everything after it, including **one silent breaking change**, is in
-`CHANGELOG.md` under Unreleased. Read that before you upgrade past the tag.
+`nav2_costmap_2d` in a clean room — **and it has never run on a robot.** The current release is `0.1.1`.
+⚑ **If you pinned `0.1.0`, upgrade.** That tag names a tree twelve commits older, and it carries
+**one silent breaking change** — the namespace join recorded as PI-16 — which its own `CHANGELOG.md`
+does **not** mention, because the disclosure was written after the tag was cut. That tree also
+contains no CI workflow at all, so no gate has ever run on it. `0.1.1` is the first release this
+project's gate has passed.
 
 **Three more bounds, before the pitch rather than after it:**
 
@@ -169,11 +172,13 @@ your nav2 carries the constant, and the build cross-checks ours against it at co
 Either way a version number cannot tell you which you have: tag `1.5.1` and `lyrical` HEAD both
 declare `<version>1.5.1</version>`.
 
-**What still stands between you and running it is not the build.** This repository has **no
-remote**; it builds, but there is nowhere to clone it from — the obtain line at the top of this
-page is a placeholder, and it is still a placeholder. *(There is a local `0.1.0` tag. A tag in a
-repository nobody can fetch is not a release, and this sentence used to say "no release tag" —
-which the tree refutes.)*
+**What still stands between you and running it is not the build, and it is no longer the obtain
+line either.** This repository is public and the clone command at the top of this page works.
+*(⚑ This paragraph read "this repository has no remote ... the obtain line is a placeholder"
+until 2026-09-07. That was true when it was written on 2026-09-06, and the remote landed without
+the sentence being corrected. Recorded rather than quietly deleted: a page that describes its own
+state goes stale the moment someone changes that state.)* What remains is that **nothing here has
+run on a robot**, and the launch bring-up has been exercised only inside a container.
 
 **Everything below describes a package you can now build.** It is accurate about what the filter
 does and how it is configured.
