@@ -120,6 +120,18 @@ runs:
       run: |
         set -eux
         D='${{ inputs.distro }}'
+        # ⚑ ROS_DISTRO IS EXPORTED HERE, AND IT IS LOAD-BEARING, NOT COSMETIC.
+        # package.xml:69 carries
+        #   <depend condition="$ROS_DISTRO != jazzy and $ROS_DISTRO != kilted">
+        # and rosdep evaluates that against this environment variable -- which is
+        # normally set by /opt/ros/<distro>/setup.bash, sourced LATER, in the job.
+        # Measured 2026-09-07 on jazzy with it unset: `rosdep install` still exits 0,
+        # but `rosdep keys` STILL LISTS nav2_ros_common. The two subcommands do not
+        # agree about the condition, so the green depended on which one you asked.
+        # A gate whose pass depends on that is a gate waiting to be surprised. One
+        # line makes every rosdep subcommand read the manifest the way its author
+        # wrote it.
+        export ROS_DISTRO="$D"
         # ⚑ EVERY SOURCE PATH IN ONE CALL. See the `extra-paths` input above for
         # why this is not tidiness: a second resolution site is a second copy of
         # the recipe, and it runs after the teardown below.

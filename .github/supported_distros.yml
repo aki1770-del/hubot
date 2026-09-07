@@ -42,28 +42,37 @@ distros:
     nav2: 1.5.1
     status: supported
 
+  # ⚑ FLIPPED 2026-09-07, THE SAME DAY THIS FILE WAS WRITTEN, AND THE FLIP IS THE
+  # POINT RATHER THAN AN EMBARRASSMENT. The header above predicted, in writing,
+  # that the expensive failure is "the port DOES land and the page still tells a
+  # jazzy developer to go away." Hours later the port landed. The `distro floor`
+  # job went red against a package that now builds -- which is the gate working,
+  # not breaking -- and this is the correction it forced. Nothing else in this
+  # repository would have said a word.
   - name: kilted
     ubuntu: noble               # Ubuntu 24.04
     base: ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
     nav2: 1.4.2
-    status: unsupported
-    # Measured 2026-09-07 in a clean room: of the find_package() calls in
-    # CMakeLists.txt, exactly ONE fails. (The count is deliberately not written
-    # here. The first draft of this comment said "14", which was the number my
-    # hand-run probe covered; the instrument reads the file and finds 16, because
-    # two of them live inside `if(BUILD_TESTING)`. A count typed into a comment
-    # goes stale on the next dependency; scripts/distro_floor.py derives it.) `ros-kilted-nav2-ros-common` is not
-    # published at all — it is not a version too old, it is a package that does
-    # not exist before nav2 1.5.0. rosdep says the same thing one stage earlier:
+    status: supported
+    # ⚑ WAS `unsupported`, WITH `expect_missing: [nav2_ros_common]`.
+    # Measured in a clean room BEFORE the port, 2026-09-07: of the find_package()
+    # calls in CMakeLists.txt exactly one could not be satisfied here, and the
+    # package died at `CMake Error at CMakeLists.txt:21 (find_package)` in about
+    # 1.2 s. rosdep said the same thing one stage earlier:
     #   ERROR: ... Cannot locate rosdep definition for [nav2_ros_common]
-    expect_missing: [nav2_ros_common]
+    # After the port that dependency is QUIET, reached through
+    # include/hubot/nav2_compat.hpp, and the package builds and passes here.
+    #
+    # ⚑ THE PRE-PORT STATE IS STILL REACHABLE AS A NEGATIVE CONTROL, and it has
+    # to be: `unsupported` now has no live instance, and a branch nothing
+    # exercises rots until the day it is trusted.
+    #   outputs/bde_loom/multidistro_2026_09_07/run_floor_job.sh <clone> kilted origin/master
 
   - name: jazzy
     ubuntu: noble               # Ubuntu 24.04
     base: ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
     nav2: 1.3.12
-    status: unsupported
-    # Same single missing package as kilted, measured separately on 1.3.12 rather
-    # than assumed from it — a floor claim carried across two distributions on one
-    # measurement is one measurement wearing two hats.
-    expect_missing: [nav2_ros_common]
+    status: supported
+    # Same as kilted, measured separately on 1.3.12 rather than assumed from it —
+    # a floor claim carried across two distributions on one measurement is one
+    # measurement wearing two hats.

@@ -599,7 +599,7 @@ jobs:
     name: distro floor (${{ matrix.name }})
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     strategy:
       # A jazzy failure must not cancel the kilted run: they are separate claims
       # and a porter needs both answers from one push.
@@ -651,15 +651,7 @@ jobs:
           python3 -c "import yaml" 2>/dev/null || \
             { apt-get update -qq && apt-get install -y -qq --no-install-recommends python3-yaml; }
 
-          if [ "$STATUS" = "supported" ]; then
-            if [ "$OUTCOME" != "success" ]; then
-              echo "" >&2
-              echo "$D is declared SUPPORTED and its substrate did not come up." >&2
-              echo "Either the feed moved or the declaration is wrong. Read the" >&2
-              echo "substrate step above -- it prints the versions it installed." >&2
-              exit 1
-            fi
-          else
+          if [ "$STATUS" != "supported" ]; then
             # ⚑ INSTALL EVERYTHING THE DECLARATION DOES *NOT* CALL MISSING, so the
             # probe below distinguishes "this one package is absent" from "nothing
             # is installed". The skip list comes from the declaration; no ROS
@@ -675,6 +667,14 @@ jobs:
             echo "resolving the manifest with the declared-missing keys skipped: $SKIP"
             rosdep install --from-paths "$GITHUB_WORKSPACE" --ignore-src \
               --rosdistro "$D" -y --skip-keys "$SKIP" 2>&1 | tail -5
+          elif [ "$OUTCOME" != "success" ]; then
+            echo "" >&2
+            echo "$D is declared SUPPORTED and its substrate did not come up." >&2
+            echo "That is rosdep failing to resolve package.xml on this distribution," >&2
+            echo "which is a real defect and not a flake: it is exactly what a" >&2
+            echo "developer following the README would hit first. Read the substrate" >&2
+            echo "step above -- it prints the versions it installed." >&2
+            exit 1
           fi
 
           # ⛑ `set -u` off across the source: ROS's setup.bash dereferences
@@ -689,7 +689,48 @@ jobs:
             cat /tmp/floor.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
+          [ "$rc" -eq 0 ] || exit "$rc"
+
+          # ⚑ `supported` MEANS BUILDS AND PASSES, NOT CONFIGURES.
+          # The probe above proves CMake is satisfied. That is where a floor claim
+          # used to stop, and it would have been enough to call jazzy supported on
+          # the afternoon the port landed -- while `CostmapFilter::process()` still
+          # takes a Pose2D there and a Pose on lyrical, which is a COMPILE-stage
+          # difference no configure ever sees. A row that says "builds today" has
+          # to have built today.
+          [ "$STATUS" = "supported" ] || exit 0
+          mkdir -p /ws/src && cp -r "$GITHUB_WORKSPACE" /ws/src/hubot && cd /ws
+          colcon build --packages-select hubot \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1 | tee /ws/build.log
+          brc=${PIPESTATUS[0]}
+          if [ "$brc" -ne 0 ]; then
+            {
+              echo "**$D BUILD FAILED**, and the declaration calls it supported."
+              echo '```'
+              grep -E " (error|fatal error): " /ws/build.log | head -30
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$brc"
+          fi
+
+          # ⚑ `colcon test-result` IS THE GATE; `colcon test` IS ONLY HOW THEY RUN.
+          # Measured on this package: a deliberately broken safety invariant left
+          # `colcon build` AND `colcon test` both exiting 0, and only test-result
+          # exited 1. The same trap is documented on the `suite` job above; it is
+          # restated rather than cross-referenced because the next person to edit
+          # this job will be reading this job.
+          colcon test --packages-select hubot --event-handlers console_direct+ \
+            2>&1 | tail -40 || true
+          colcon test-result --verbose 2>&1 | tee /ws/test-result.log
+          trc=${PIPESTATUS[0]}
+          {
+            echo "### suite on $D"
+            echo '```'
+            grep -E "^Summary:" /ws/test-result.log || tail -5 /ws/test-result.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$trc"
+
 
   # ── 6 ── the page and the declaration say the same thing, byte for byte
   #
