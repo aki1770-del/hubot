@@ -368,3 +368,217 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
+
+  # ── 4 ── the live stack: the harness the SOTIF liveness claim cites, built and RUN
+  #
+  # ⚑ WHY A FOURTH JOB AND NOT TWO MORE LINES IN `suite`.
+  # `suite` gates the package a stranger installs. This gates a harness that drives
+  # it from a real nav2 controller_server. Widening `suite` to build both would give
+  # one red light two meanings -- "your change broke hubot" and "your change broke the
+  # harness" -- and a contributor cannot act on a light that means either. It also
+  # would not have worked: see the crawl note below.
+  #
+  # ⚑ NOTHING ABOVE THIS LINE IS TOUCHED BY THIS JOB. Measured 2026-09-07: with
+  # `hubot_live_stack/` present in the tree, `rosdep install --from-paths
+  # $GITHUB_WORKSPACE` still resolves the SAME 17 keys, and `colcon build
+  # --packages-select hubot` builds the same one package. The two jobs above are
+  # byte-identical to what they were, and their substrate does not grow.
+  #
+  # ⚑ THE COST, MEASURED RATHER THAN ESTIMATED. Over `suite`'s 17 resolved keys this
+  # job resolves 21: the harness's own nav2_behavior_tree, nav2_controller,
+  # behaviortree_cpp and nav2_regulated_pure_pursuit_controller, plus two ros2 CLI
+  # verb packages it now declares because its SHIPPED script invokes them (the other
+  # four verbs arrive with the tools the composite action already installs).
+  #
+  # ⚑ AND THE DEB NAMES ARE DELIBERATELY NOT WRITTEN ANYWHERE IN THIS FILE. CHK-10
+  # greps this file for them and it is right to: a package name written here is a
+  # second dependency list being born. They live in hubot_live_stack/package.xml and
+  # rosdep resolves them. This comment was RED on that check until it was reworded,
+  # which is the check doing its job on the person adding a job to it.
+  live-stack:
+    name: live stack (harness, released nav2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
+      # No `options: --init` here either, for the reason recorded on the jobs above.
+    steps:
+      - name: bootstrap (git, so checkout is a real clone)
+        run: |
+          set -eux
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            ca-certificates curl gnupg git
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: git safe.directory (checkout runs as root in this container)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: ./.github/actions/ros-substrate
+
+      # ⚑ apt-get update, AND IT IS THE OPPOSITE OF BOILERPLATE: ITS ABSENCE IS THE
+      # ONLY RED THIS JOB HAS EVER HAD. Runs 34109685952 and 34109690179, both on
+      # PR #1, died here in 0.33 s with
+      #     E: Unable to locate package <the first key this job adds>
+      # and that message is a liar. The shared substrate action above ends by
+      # deleting /var/lib/apt/lists/* -- correct for IT, since it has finished
+      # installing and the lists are tens of MB it does not need. But apt's message
+      # for "I have no package lists" is byte-identical to its message for "that
+      # package does not exist", so the failure reads as a bad dependency key and is
+      # not one. Measured 2026-09-07 against the live feed
+      # (dists/resolute/main/binary-amd64/Packages.gz, 46156 lines): every key this
+      # job adds IS served. The manifest was right, the feed was right, apt had
+      # nothing to read.
+      #
+      # ⚑ AND THE REASON THE LOCAL VERIFICATION MISSED IT IS WORTH MORE THAN THE FIX.
+      # This job was proven green in a container that ran the substrate action's
+      # install steps but not its last line, because that loom was TYPED from the
+      # action rather than extracted from it. A reproduction that diverges from the
+      # thing it reproduces proves nothing about it -- and it will diverge exactly
+      # where a human's eye skips, which is the teardown. The loom now generates its
+      # substrate by parsing this action's YAML.
+      - name: apt lists, which the shared action deletes on its way out
+        shell: bash
+        run: |
+          set -eux
+          apt-get update -qq
+          # Fail with the true diagnosis rather than apt's misleading one. No package
+          # is named here on purpose: a name written into this workflow is a second
+          # dependency list being born, which is what CHK-10 exists to stop.
+          n=$(ls -1 /var/lib/apt/lists/*_Packages* 2>/dev/null | wc -l)
+          if [ "$n" -eq 0 ]; then
+            echo "apt has NO package lists. Every install below would report" >&2
+            echo "'Unable to locate package', which is not what it means." >&2
+            exit 1
+          fi
+
+      # ⚑ A SECOND rosdep CALL, AND THE REASON IS NOT TIDINESS.
+      # colcon and rosdep both stop crawling at the first package.xml on a path.
+      # This repository's ROOT is a package, so `hubot_live_stack/` -- which lives
+      # inside it -- is invisible to `--from-paths $GITHUB_WORKSPACE`. Measured
+      # 2026-09-07: 17 keys resolved with the directory present, the same 17 as
+      # without it. Pointing rosdep at the harness ALONE does not work either:
+      #     ERROR: hubot_live_stack: Cannot locate rosdep definition for [hubot]
+      # because `hubot` is an <exec_depend> here and is not a published rosdep key.
+      # Both paths, in one call, is the only invocation that resolves all 20.
+      - name: the harness's own dependencies, resolved FROM ITS package.xml
+        shell: bash
+        run: |
+          set -eux
+          rosdep install \
+            --from-paths "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/hubot_live_stack" \
+            --ignore-src --rosdistro lyrical -y
+
+      # ⚑ THE GUARD PROVES IT CAN REFUSE BEFORE IT IS TRUSTED TO PASS.
+      # The field failure here is silent: `colcon build --packages-select
+      # hubot_live_stack` on this layout prints a WARNING, builds nothing, and exits
+      # ZERO. This step runs exactly that and requires the guard to say NO.
+      - name: negative control — the build guard must be able to fail
+        shell: bash
+        run: |
+          set +u; source /opt/ros/lyrical/setup.bash; set -u
+          mkdir -p /ws/src && cp -r "$GITHUB_WORKSPACE" /ws/src/hubot
+          bash /ws/src/hubot/hubot_live_stack/scripts/build_gate.sh /ws --selftest
+
+      - name: build — by explicit path, then assert the artifacts exist
+        shell: bash
+        run: |
+          set +u; source /opt/ros/lyrical/setup.bash; set -u
+          bash /ws/src/hubot/hubot_live_stack/scripts/build_gate.sh /ws 2>&1 | tee /ws/live_build.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo "### live-stack build"
+            echo '```'
+            tail -12 /ws/live_build.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      # ⚑ THE RUN MUST BE ABLE TO GO RED, AND PROVING IT IS NOT OPTIONAL HERE.
+      # Until 2026-09-07 `run_live_stack.sh` exited 0 unconditionally -- its last
+      # command was an `ls` -- so three runs in a row on released nav2 reported
+      # success over a stack whose costmap never activated. It now exits non-zero
+      # when a lifecycle or recovery stage fails. This step applies an overlay that
+      # names a controller plugin that does not exist, which is exactly how the
+      # harness really failed that day, and requires the script to REFUSE.
+      - name: negative control — the run must be able to fail
+        shell: bash
+        run: |
+          set +u; source /opt/ros/lyrical/setup.bash; source /ws/install/setup.bash; set -u
+          set -uo pipefail
+          S=/ws/install/hubot_live_stack/share/hubot_live_stack/scripts/run_live_stack.sh
+          if bash "$S" --overlay overlay_selftest_broken_controller.yaml \
+               --outdir /ws/run_selftest --hold-secs 4 > /ws/run_selftest.txt 2>&1; then
+            echo "**FAILED: the harness reported success on a stack that cannot activate.**" \
+              >> "$GITHUB_STEP_SUMMARY"
+            tail -20 /ws/run_selftest.txt
+            exit 1
+          fi
+          echo "PASSED: a stack that cannot activate is reported as a failure." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      # ⚑ THE POINT OF LANDING THIS PACKAGE. `doc/SOTIF_PERFORMANCE_INSUFFICIENCY.md`
+      # discharges its largest liveness claim by citing a RUN of this harness. Until
+      # this job existed, that run had happened once, by hand, on one machine, on an
+      # image no reader can obtain. Here it happens on released nav2, on every push,
+      # where anyone can read the log.
+      #
+      # ⚑ THE EXIT CODE IS THE VERDICT, NOT A grep OF THE OUTPUT. The first draft of
+      # this step piped the run through `grep -E "configure rc|activate rc"` and took
+      # the pipeline's status -- which matches `activate rc=1` just as happily as
+      # `rc=0`, so a failed run would have gone green. Caught before it was committed;
+      # recorded because it is the same defect as the one above, one layer up.
+      - name: run — the three conditions, on released nav2
+        shell: bash
+        run: |
+          set +u; source /opt/ros/lyrical/setup.bash; source /ws/install/setup.bash; set -u
+          set -uo pipefail
+          S=/ws/install/hubot_live_stack/share/hubot_live_stack/scripts/run_live_stack.sh
+          rc=0
+          for cond in "base:" "accepts:--overlay overlay_target_accepts.yaml" \
+                      "relative:--overlay overlay_target_relative_name.yaml"; do
+            name="${cond%%:*}"; args="${cond#*:}"
+            echo "===== condition: $name ====="
+            # shellcheck disable=SC2086
+            bash "$S" $args --outdir "/ws/run_$name" --hold-secs 8 > "/ws/run_$name.txt" 2>&1 \
+              || { echo "condition $name FAILED"; rc=1; }
+            grep -E "configure rc|activate rc|bt_recovery rc" "/ws/run_$name.txt" || true
+          done
+          {
+            echo "### live stack — three conditions on released nav2"
+            echo '```'
+            grep -H -E "configure rc|activate rc|bt_recovery rc" /ws/run_*.txt || echo "no rc lines produced"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ne 0 ]; then
+            {
+              echo ""
+              echo "**RED.** The tail of each failing condition:"
+              echo '```'
+              tail -25 /ws/run_*.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
+
+      - name: keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-stack-logs
+          path: |
+            /ws/live_build.log
+            /ws/run_base/
+            /ws/run_accepts/
+            /ws/run_relative/
+            /ws/run_selftest/
+            /ws/run_base.txt
+            /ws/run_accepts.txt
+            /ws/run_relative.txt
+            /ws/run_selftest.txt
+          if-no-files-found: warn
+          retention-days: 14
