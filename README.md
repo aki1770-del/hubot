@@ -18,6 +18,21 @@ does **not** mention, because the disclosure was written after the tag was cut. 
 contains no CI workflow at all, so no gate has ever run on it. `0.1.1` is the first release this
 project's gate has passed.
 
+⚑ **Which ROS 2 distribution — read this before you clone.** This package requires **nav2 >= 1.5.0**,
+which today means **`lyrical` on Ubuntu 26.04 (`resolute`)**. On **`jazzy`** (nav2 `1.3.12`) and
+**`kilted`** (nav2 `1.4.2`) it **does not build** — and it fails at *configure*, in about a second,
+rather than part-way through a compile. Measured 2026-09-07 against both distributions' real
+published packages, not inferred from headers: `find_package` fails at `CMakeLists.txt:21` because
+**`nav2_ros_common` does not exist before nav2 1.5.0**, and no `ros-jazzy-nav2-ros-common` or
+`ros-kilted-nav2-ros-common` is published at all.
+
+A version shim would not be enough, and the reason is worth stating rather than leaving you to
+discover it: **`CostmapFilter::process()` is a pure virtual whose signature changed at 1.5.0** —
+`geometry_msgs::msg::Pose2D` before it, `geometry_msgs::msg::Pose` after. One `process()` cannot
+override both, so on an older nav2 this class is **abstract** and pluginlib cannot instantiate it
+even if every other difference were papered over. If you are on `jazzy` or `kilted`, this package
+has nothing for you today, and we would rather you learn that here than from a build log.
+
 **Three more bounds, before the pitch rather than after it:**
 
 - ⚑ **It has never run on a robot.** It builds, its plugin loads, its tests drive it
