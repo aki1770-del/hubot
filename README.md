@@ -18,13 +18,25 @@ does **not** mention, because the disclosure was written after the tag was cut. 
 contains no CI workflow at all, so no gate has ever run on it. `0.1.1` is the first release this
 project's gate has passed.
 
-⚑ **Which ROS 2 distribution — read this before you clone.** This package requires **nav2 >= 1.5.0**,
-which today means **`lyrical` on Ubuntu 26.04 (`resolute`)**. On **`jazzy`** (nav2 `1.3.12`) and
-**`kilted`** (nav2 `1.4.2`) it **does not build** — and it fails at *configure*, in about a second,
-rather than part-way through a compile. Measured 2026-09-07 against both distributions' real
-published packages, not inferred from headers: `find_package` fails at `CMakeLists.txt:21` because
-**`nav2_ros_common` does not exist before nav2 1.5.0**, and no `ros-jazzy-nav2-ros-common` or
-`ros-kilted-nav2-ros-common` is published at all.
+⚑ **Which ROS 2 distribution.** **`jazzy`, `kilted` and `lyrical` all build and pass**, each against
+its own distribution's real published `nav2` — `1.3.12`, `1.4.2` and `1.5.1` respectively. The table
+below is generated from `.github/supported_distros.yml`, and CI proves every row of it on every run.
+
+⚑ **This paragraph said the opposite until 2026-09-07, and the correction is the point.** It read:
+*"On `jazzy` and `kilted` it does not build … if you are on `jazzy` or `kilted`, this package has
+nothing for you today."* That was true, measured, and published — and then it was treated as a
+permanent property of the world rather than a problem to solve. It was neither.
+
+**What the wall actually was:** one dependency, `nav2_ros_common`, which does not exist before nav2
+1.5.0 — and four of the things this package used it for turned out to be **three type aliases and a
+three-line QoS preset**. `rclcpp_lifecycle::LifecycleNode::create_publisher` and
+`::create_subscription` are byte-identical across all three distributions. The pose type in
+`CostmapFilter::process()`, which does differ across the 1.5.0 boundary, is **deduced from the base
+class's own declaration**, so it needed no version switch at all. Two genuine differences remain and
+are handled where they occur: `Layer::joinWithParentNamespace()` (absent on jazzy) and
+`CostmapFilter::worldToMask()` (removed at 1.5.x in favour of `nav2_util::worldToMap()`).
+
+**If you pinned `0.1.0` or `0.1.1`, neither carries this.** Both are `lyrical`-only.
 
 <!-- BEGIN GENERATED distro-floor — edit .github/supported_distros.yml, then run scripts/distro_floor.py --render -->
 
@@ -34,19 +46,26 @@ published packages, not inferred from headers: `find_package` fails at `CMakeLis
 | ROS 2 | Ubuntu | nav2 | builds today |
 |---|---|---|---|
 | `lyrical` | resolute | `1.5.1` | **yes** |
-| `kilted` | noble | `1.4.2` | no — missing `nav2_ros_common` |
-| `jazzy` | noble | `1.3.12` | no — missing `nav2_ros_common` |
+| `kilted` | noble | `1.4.2` | **yes** |
+| `jazzy` | noble | `1.3.12` | **yes** |
 
 Measured against the live package feed, not inferred from headers.
 
 <!-- END GENERATED distro-floor -->
 
-A version shim would not be enough, and the reason is worth stating rather than leaving you to
-discover it: **`CostmapFilter::process()` is a pure virtual whose signature changed at 1.5.0** —
-`geometry_msgs::msg::Pose2D` before it, `geometry_msgs::msg::Pose` after. One `process()` cannot
-override both, so on an older nav2 this class is **abstract** and pluginlib cannot instantiate it
-even if every other difference were papered over. If you are on `jazzy` or `kilted`, this package
-has nothing for you today, and we would rather you learn that here than from a build log.
+⚑ **This page also argued, until 2026-09-07, that no shim could work.** It said
+`CostmapFilter::process()` is a pure virtual whose signature changed at 1.5.0 — `Pose2D` before,
+`Pose` after — that one `process()` cannot override both, and that the class is therefore *abstract*
+on an older nav2 and unloadable whatever else was done.
+
+**The premise was right and the conclusion was wrong.** The signature does change. But this package
+never has to name the pose type: it is **deduced from the base class's own declaration of the
+function being overridden**, so the two statements of the fact cannot disagree. There is no version
+switch on `process()` in this repository, because none is needed. *(It matters concretely as well —
+`geometry_msgs` on `lyrical` no longer ships `pose2_d.hpp`, so code naming that type would not
+compile there at all.)*
+
+Kept rather than deleted, because the argument was published and a reader may have believed it.
 
 **Three more bounds, before the pitch rather than after it:**
 
