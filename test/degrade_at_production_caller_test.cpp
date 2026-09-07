@@ -21,8 +21,7 @@
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
-#include "nav2_ros_common/lifecycle_node.hpp"
-#include "nav2_ros_common/tf2_factories.hpp"
+#include "hubot/nav2_compat.hpp"
 #include "geometry_msgs/msg/pose.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "rcl_interfaces/msg/parameter_descriptor.hpp"
@@ -307,14 +306,14 @@ protected:
     }
     opts.parameter_overrides(all_overrides);
 
-    node_ = std::make_shared<nav2::LifecycleNode>("zpf_test_host", opts);
+    node_ = std::make_shared<hubot::HostNode>("zpf_test_host", "", opts);
     node_executor_.add_node(node_->get_node_base_interface());
 
     decision_sub_ = std::make_shared<DecisionSubscriber>();
     decision_executor_.add_node(decision_sub_);
 
     layers_ = std::make_shared<nav2_costmap_2d::LayeredCostmap>("map", false, false);
-    tf_buffer_ = nav2::create_transform_buffer(node_);
+    tf_buffer_ = hubot::createTransformBuffer(node_);
     tf_buffer_->setUsingDedicatedThread(true);  // One-thread broadcasting-listening model
 
     filter_ = std::make_shared<InspectableZpf>();
@@ -368,10 +367,11 @@ protected:
   void runProcess(double pose_x = 1.5, double pose_y = 1.5)
   {
     nav2_costmap_2d::Costmap2D costmap(4, 4, 1.0, 0.0, 0.0, 0);
-    geometry_msgs::msg::Pose pose;
-    pose.position.x = pose_x;
-    pose.position.y = pose_y;
-    pose.orientation.w = 1.0;
+    // ⚑ NOT `geometry_msgs::msg::Pose`. The pose `process()` takes is `Pose2D`
+    // through nav2 1.4.2 and `Pose` from 1.5.0, and geometry_msgs at lyrical no
+    // longer ships pose2_d.hpp -- so a test that names either type builds on
+    // some distros and not others. hubot::makeFilterPose() names neither.
+    const hubot::FilterPose pose = hubot::makeFilterPose(pose_x, pose_y);
     filter_->process(costmap, 0, 0, 4, 4, pose);
   }
 
@@ -443,9 +443,9 @@ protected:
   std::shared_ptr<TargetNode> target_node_;
   std::shared_ptr<SecondTargetNode> second_target_node_;
   std::shared_ptr<StateEventSubscriber> state_event_sub_;
-  nav2::LifecycleNode::SharedPtr node_;
+  std::shared_ptr<hubot::HostNode> node_;
   std::shared_ptr<nav2_costmap_2d::LayeredCostmap> layers_;
-  nav2::TransformBuffer::SharedPtr tf_buffer_;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<InspectableZpf> filter_;
   std::shared_ptr<DecisionSubscriber> decision_sub_;
   rclcpp::executors::SingleThreadedExecutor decision_executor_;
