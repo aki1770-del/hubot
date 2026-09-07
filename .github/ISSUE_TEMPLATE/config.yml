@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/aki1770-del/hubot/blob/master/SECURITY.md
+    about: A component on a safety path. Please do not file this on the public tracker.
+  - name: What to include in a report
+    url: https://github.com/aki1770-del/hubot/blob/master/CONTRIBUTING.md
+    about: The four facts, and the commands that produce them.

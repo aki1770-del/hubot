@@ -121,6 +121,15 @@ register of measurement, and it is withdrawn rather than quietly replaced.)*
 - **It does not stop your robot.** It reports; you hold the stop. If you do not build the
   stop, nothing acts on what hubot says.
 
+**If any of that is wrong on your machine, that is the report we most want.** Open an issue:
+<https://github.com/aki1770-del/hubot/issues>. [CONTRIBUTING.md](CONTRIBUTING.md) says what to
+include; a vulnerability goes to [SECURITY.md](SECURITY.md) instead of the public tracker.
+
+⚑ **If you already have a `ZoneParameterFilter`, read *"Lineage, and which of the two you
+want"* at the foot of this page before you go further.** nav2 has merged a filter of that
+name, by the same author, and on the failure this package is about the two behave oppositely.
+That section says which one to prefer, and it does not always say this one.
+
 ---
 
 ## Run it
@@ -142,8 +151,10 @@ ros2 topic echo /zone_decision
 ```
 
 You should see `enforced: yes` and *"Zone 1 is in force."*, and the target process should
-log `set_parameters ARRIVED HERE: demo_speed -> 0.3`. **If you see anything else, this
-launch file has not done its job — say so.**
+log `set_parameters ARRIVED HERE: demo_speed -> 0.3`. **If you see anything else, this launch
+file has not done its job — please say so at <https://github.com/aki1770-del/hubot/issues>.**
+[CONTRIBUTING.md](CONTRIBUTING.md) lists the four facts that make that report answerable
+without a round trip, and the issue form asks for them so you do not have to guess.
 
 **What it starts**, all of it either a stock nav2 executable or a file this package
 installs — nothing is read from a source tree:
@@ -836,7 +847,73 @@ that cannot succeed — and a citation a reader cannot resolve is worse than non
 it looks resolved. The same rule is why Sakichi's principles are quoted in full in the
 comments that rest on them rather than cited by a number you would have no way to check.
 
-## Lineage and licence
+## Lineage, and which of the two you want
+
+**nav2 has a `ZoneParameterFilter` of its own, by the same author, and it is merged.** If you
+came here already knowing that name, this is the section you want, because the two are not
+interchangeable and the difference is not a matter of polish.
+
+**Where the upstream one is.** Merged into nav2 `main` on 2026-08-10 as `ea95cc39` (PR #6104),
+and backported to `lyrical` on 2026-08-11 as `dccd19ba` (#6334). It is on neither `jazzy` nor
+`kilted`.
+
+⚑ **It is not in a release yet, so `apt` does not give it to you today.** Measured 2026-09-08:
+`lyrical`'s released `nav2_costmap_2d` is `1.5.1` — published binary
+`1.5.1-1resolute.20260813.030929` — and the `1.5.1` tag was cut about three hours *before* the
+backport landed, so the tag does not contain the file at all. `git tag --contains dccd19ba`
+returns nothing. You have the upstream filter today only if you build nav2 from `lyrical` or
+`main` source; once the next `lyrical` release is cut, `apt` will carry it too. **Check your own
+tree rather than taking this paragraph's word for it, since it will go out of date:**
+
+```bash
+ls "$(ros2 pkg prefix nav2_costmap_2d)"/share/nav2_costmap_2d/*.xml
+grep -rl zone_parameter_filter "$(ros2 pkg prefix nav2_costmap_2d)/share" 2>/dev/null
+```
+
+### On the failure this package is about, they do opposite things
+
+Both agree on the premise, and the upstream wording of it is kept verbatim in this source: a
+parameter set that fails must never be swallowed, because that leaves the robot on the value a
+safety zone tried to change. They disagree about what to do next.
+
+| the target … | upstream `nav2_costmap_2d` | hubot |
+|---|---|---|
+| **rejects the set** | throws `std::runtime_error` from `checkPendingParameterUpdates()` | logs the reason at `ERROR`, names the target, latches it degraded, keeps ticking, and publishes it |
+| **never answers at all** | not examined — an unready future is skipped on every pass, indefinitely | timed out against `set_parameters_timeout`, then treated as the failure it is |
+| **mask carries a state you never declared** | throws from `applyState()` | logs at `ERROR` naming the undeclared id and the state actually in force, and carries on |
+
+**Why the throw matters more than it sounds.** Both throw sites are reached from `process()`;
+`CostmapFilter::updateCosts()` calls `process()` with no `try`/`catch`, and nothing above it
+has one either. An uncaught exception there ends the navigation node. The third row is the one
+worth pausing on: it is reached by **mask data**, so a single mis-painted pixel is enough.
+
+**Why this package does the other thing.** A robot whose navigation stack has aborted is not in
+a better position than one that keeps navigating and says loudly that a limit is not on. That
+is the entire argument, and it has a cost that is stated plainly elsewhere on this page: a
+filter that carries on has not fixed anything — it has handed you a decision, and you have to
+build something that reads `zone_decision` and acts.
+
+### Which one to prefer
+
+**Prefer the upstream filter if** you are on nav2 `main` or `lyrical` source and want the one
+that nav2's own maintainers review and its own CI covers, that arrives with the distribution
+and needs no extra package — **or if a crash is the signal you actually want.** In a system
+supervised by something that restarts a failed node, a hard stop on a failed safety-parameter
+set is a defensible design, and it is deliberate upstream, not an oversight.
+
+⚑ **And the case against this package, stated because it is the one that costs us: if nothing
+in your system is going to subscribe to `zone_decision` and act on it, hubot's whole difference
+is a topic nobody reads** — you would have taken on a second implementation of the same filter
+and got a log line for it. The upstream one is the better choice there.
+
+**Prefer this one if** an aborting navigation node is not something you can accept mid-drive,
+**or** you need the never-answered case caught at all — that row has no upstream equivalent,
+and it is the failure that looks most exactly like success.
+
+**Neither, on `jazzy` or `kilted`.** This package does not build there, and the upstream filter
+is not on those branches. See the distribution table at the top of this page.
+
+### Licence, and what the upstream findings mean here
 
 hubot's filter derives from `nav2_costmap_2d::ZoneParameterFilter` and is written by
 the same author, with the same Apache-2.0 licence and the same copyright line:

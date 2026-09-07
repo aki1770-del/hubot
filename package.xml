@@ -14,6 +14,12 @@
   <maintainer email="aki1770@gmail.com">Komada</maintainer>
   <license>Apache-2.0</license>
 
+  <!-- Where a report goes, stated in the manifest as well as on the page: a reader who
+       arrives through package metadata rather than through the README never sees the
+       front page at all. Security reports go to SECURITY.md, not to the tracker. -->
+  <url type="repository">https://github.com/aki1770-del/hubot</url>
+  <url type="bugtracker">https://github.com/aki1770-del/hubot/issues</url>
+
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <!-- ⚑ VERIFIED against a RELEASE, 2026-09-06 (CPP, Phase B).

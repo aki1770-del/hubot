@@ -82,6 +82,33 @@ DOCDIR = "doc"
 SHIP_DIRS = ("launch", "params", "maps")
 XML_FILES = (PKG, "hubot_plugins.xml")
 
+# --- CHK-11: THE DOOR. Until 2026-09-08 this package had no CONTRIBUTING.md, no
+# SECURITY.md and no issue form, and the front page told a reader whose demo run went
+# wrong to "say so" without ever naming anyone to say it to. The door was then added --
+# and this gate ran GREEN over all fourteen checks without reading one byte of it,
+# because every check above is keyed to a NAMED file. A door is not a door if nobody can
+# find it, and an unread door rots exactly like an unread number: silently, and in the
+# direction of looking fine.
+#
+# Three limbs, because there are three separate ways a door stops working and only one
+# of them is visible in a diff: the file goes missing; the page stops linking to it; or
+# the form and the page stop agreeing about what a reporter has to send.
+DOOR_FILES = ("CONTRIBUTING.md", "SECURITY.md")
+ISSUE_TEMPLATE_DIR = os.path.join(".github", "ISSUE_TEMPLATE")
+
+# The four facts a report needs before anyone can act on it without an interview. Each
+# entry is (the form field id that must be REQUIRED, a token CONTRIBUTING.md must carry
+# so a reporter can produce that fact without asking us how). Both sides are checked,
+# for the reason CHK-2 checks both of its operands: a form demanding a fact the page
+# never explains is an interview with extra steps, and a page naming a fact the form
+# does not collect is a promise the tracker will not keep.
+REPORT_FACTS = (
+    ("distro", "$ROS_DISTRO"),
+    ("nav2-version", "nav2_costmap_2d"),
+    ("arch", "uname"),
+    ("zone-decision", "zone_decision"),
+)
+
 # --- CHK-4: operator sentences this project has RETIRED. Prose still carrying one of
 # these is quoting a sentence the binary no longer emits. Append on every reword. ---
 # Each must be long enough to be OURS. The first cut of this list carried the four-word
@@ -121,6 +148,11 @@ def read(root, rel):
 
 def doc_files(root):
     out = [RDM, CML]
+    # The door files ship publicly and are prose about this tree like any other, so
+    # they are inside the prose checks rather than beside them. They are appended
+    # conditionally because CHK-11 is the check that rules on their ABSENCE; a missing
+    # door must produce one clear RED there, not a crash here.
+    out += [n for n in DOOR_FILES if os.path.isfile(os.path.join(root, n))]
     d = os.path.join(root, DOCDIR)
     if os.path.isdir(d):
         out += [os.path.join(DOCDIR, n) for n in sorted(os.listdir(d)) if n.endswith(".md")]
@@ -597,6 +629,58 @@ def run_checks(root):
                     "; ".join(problems) if problems else
                     "every building job takes its dependencies from package.xml through the "
                     "one shared substrate action; no ROS package is named in the workflow"))
+
+    # ---- CHK-11  the door exists, the page links it, and the form and the page agree ----
+    problems = []
+    missing = [n for n in DOOR_FILES if not os.path.isfile(os.path.join(root, n))]
+    if missing:
+        problems.append("absent: " + ", ".join(missing))
+
+    # A door nobody can find is not a door. The link is checked in the README because
+    # that is the page a reader arrives on; a file present in the tree and named nowhere
+    # is reachable only by someone already browsing the repository root.
+    rdm = read(root, RDM)
+    unlinked = [n for n in DOOR_FILES
+                if os.path.isfile(os.path.join(root, n)) and ("(%s)" % n) not in rdm]
+    if unlinked:
+        problems.append("in the tree but not linked from README.md: " + ", ".join(unlinked))
+
+    forms, unparsed = {}, []
+    d = os.path.join(root, ISSUE_TEMPLATE_DIR)
+    if not os.path.isdir(d):
+        problems.append("no %s -- a reporter has to guess what to send" % ISSUE_TEMPLATE_DIR)
+    else:
+        import yaml
+        for n in sorted(os.listdir(d)):
+            if not n.endswith((".yml", ".yaml")):
+                continue
+            try:
+                forms[n] = yaml.safe_load(read(root, os.path.join(ISSUE_TEMPLATE_DIR, n)))
+            except Exception as e:
+                unparsed.append("%s (%s)" % (n, type(e).__name__))
+        if unparsed:
+            # GitHub renders a form it cannot parse as no form at all, and says so
+            # nowhere the author will see.
+            problems.append("does not parse: " + ", ".join(unparsed))
+
+    required_ids = set()
+    for doc in forms.values():
+        for field in (doc or {}).get("body", []) or []:
+            if isinstance(field, dict) and (field.get("validations") or {}).get("required"):
+                required_ids.add(field.get("id"))
+    contributing = (read(root, "CONTRIBUTING.md")
+                    if os.path.isfile(os.path.join(root, "CONTRIBUTING.md")) else "")
+    for fid, token in REPORT_FACTS:
+        if fid not in required_ids:
+            problems.append("no required form field `%s`" % fid)
+        if contributing and token not in contributing:
+            problems.append("CONTRIBUTING.md does not say how to get `%s`" % token)
+
+    res.append(("CHK-11", not problems,
+                "; ".join(problems) if problems else
+                "%s present and linked from README; %d issue form(s) parse; the %d facts "
+                "CONTRIBUTING explains are the %d the form requires"
+                % (" + ".join(DOOR_FILES), len(forms), len(REPORT_FACTS), len(REPORT_FACTS))))
     return res
 
 
@@ -678,6 +762,24 @@ MUTATIONS = [
     ("CHK-10", os.path.join(".github", "workflows", "gate.yml"),
      lambda t: t.replace("ca-certificates curl gnupg git",
                          "ca-certificates curl gnupg git ros-lyrical-nav2-costmap-2d", 1)),
+    # ⛑ ANCHORED ON `render: text`, WHICH OCCURS ONCE AND ONLY ON THE TRANSCRIPT
+    # FIELD. Mutating the FIRST `required: true` in the file would land on
+    # `what-happened`, which is not one of the four facts, and the control would report
+    # STILL GREEN while CHK-11 was working perfectly -- the cpp:648 lesson SC-9's own
+    # first control taught this file, in a different file.
+    ("CHK-11", os.path.join(".github", "ISSUE_TEMPLATE", "bug_report.yml"),
+     lambda t: t.replace("      render: text\n    validations:\n      required: true",
+                         "      render: text\n    validations:\n      required: false", 1)),
+    # ⛑ THE OTHER OPERAND, for the reason CHK-2 has two: the agreement can be broken
+    # from the page's side as easily as from the form's, and only one of those two
+    # directions is visible when you are editing the form.
+    ("CHK-11", "CONTRIBUTING.md", lambda t: t.replace("$ROS_DISTRO", "the distribution")),
+    # ⛑ THE LINK, NOT THE FILE. This deletes every link to CONTRIBUTING.md from the
+    # README and leaves the file itself in the tree -- the exact shape of a door that
+    # exists and cannot be found, which no existence check can see and which a diff of
+    # the door file itself shows as no change at all. `replace` with no count, because
+    # the page links it more than once and removing one would leave the check green.
+    ("CHK-11", RDM, lambda t: t.replace("(CONTRIBUTING.md)", "(the contributing guide)")),
 ]
 
 
@@ -698,6 +800,11 @@ REPO_MUTATIONS = [
     ("CHK-5", False, "add a binary doc no check can read",
      lambda dst, pkv: io.open(os.path.join(dst, DOCDIR, "regression_probe.docx"),
                               "wb").write(b"PK\x03\x04 not readable prose")),
+    # ⛑ The existence limb needs a control that REMOVES A FILE, and no text mutation
+    # can express that -- the same reason CHK-5's control has to create a file rather
+    # than edit one.
+    ("CHK-11", False, "delete SECURITY.md (the door file is gone)",
+     lambda dst, pkv: os.remove(os.path.join(dst, "SECURITY.md"))),
     ("CHK-2T", None, "delete every tag (the clean-room condition)",
      lambda dst, pkv: [subprocess.run(["git", "-C", dst, "tag", "-d", tg],
                                       capture_output=True)

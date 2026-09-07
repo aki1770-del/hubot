@@ -1,0 +1,76 @@
+name: Bug report
+description: Something did not do what the documentation said it would.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Four facts below make most reports answerable without a round trip. If you only
+        have some of them, send it anyway — a partial report beats a silent one.
+
+        **Please do not report a vulnerability here.** See
+        [SECURITY.md](https://github.com/aki1770-del/hubot/blob/master/SECURITY.md).
+
+        **If it did not build:** this package needs nav2 >= 1.5.0, which today means
+        `lyrical`. On `jazzy` and `kilted` it fails at configure, in about a second,
+        because `nav2_ros_common` does not exist before nav2 1.5.0. That one is known
+        and is on the front page — you do not need to file it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected instead
+      placeholder: Include the command you ran.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: distro
+    attributes:
+      label: ROS 2 distribution
+      description: "`echo $ROS_DISTRO`"
+      options:
+        - lyrical
+        - kilted
+        - jazzy
+        - other (say which below)
+    validations:
+      required: true
+
+  - type: input
+    id: nav2-version
+    attributes:
+      label: nav2 version
+      description: "`ros2 pkg xml nav2_costmap_2d | grep -m1 version` — or `apt list --installed 2>/dev/null | grep nav2-costmap-2d`"
+      placeholder: "1.5.1"
+    validations:
+      required: true
+
+  - type: input
+    id: arch
+    attributes:
+      label: Architecture
+      description: "`uname -srm`"
+      placeholder: "Linux 6.8.0-40-generic aarch64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: zone-decision
+    attributes:
+      label: The zone_decision transcript
+      description: |
+        `ros2 topic echo /zone_decision` — paste what it printed. This is the field that
+        saves the most time. **If it printed nothing at all, write "nothing"** — silence
+        on that topic is a finding, not a missing field.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Which hubot version or commit
+      placeholder: "0.1.1, or a commit sha"
+    validations:
+      required: false

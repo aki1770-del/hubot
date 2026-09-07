@@ -5,6 +5,39 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
 ## [Unreleased]
 
 ### Added
+- ⚑ **A way in. `CONTRIBUTING.md`, `SECURITY.md` and an issue form** — until now this
+  repository had none of the three, and the front page told a reader whose demo run went
+  wrong to *"say so"* without naming anyone to say it to. Six numbered records exist here and
+  every one is our own pull request: **nobody outside has ever reported anything**, and that is
+  what an unaddressed door produces. The form asks for the four facts that make a report
+  answerable without an interview — distribution, nav2 version, architecture, and the
+  `zone_decision` transcript — and `CONTRIBUTING.md` gives the command for each.
+- **`SECURITY.md` names the channel that actually works**, which is email, and says private
+  advisory reporting is something to check for under the Security tab rather than something
+  this page asserts — so the page cannot go quietly out of date when that setting changes. It
+  promises no response time, because nothing has ever been reported here and there is no
+  record to promise from.
+- ⚑ **README: which of the two `ZoneParameterFilter`s you want.** nav2 merged a filter of that
+  name, by the same author, on 2026-08-10 (`ea95cc39`, #6104) and backported it to `lyrical`
+  on 2026-08-11 (`dccd19ba`, #6334) — and on the failure this package exists for, the two do
+  opposite things: upstream throws from `process()`, which is reached from a bare
+  `CostmapFilter::updateCosts()`, so the navigation node ends; this one degrades, names the
+  target and keeps ticking. **A reader could not previously answer "why would I use this
+  instead of the one I already have", and the new section answers it in both directions**,
+  including the case for preferring upstream and the case against this package.
+- **The section also corrects a reach claim that was about to be published.** Measured
+  2026-09-08 against the tag and the live package feed: the `1.5.1` tag was cut about three
+  hours BEFORE the `lyrical` backport landed and **does not contain the file**;
+  `git tag --contains dccd19ba` returns nothing; the published binary is
+  `1.5.1-1resolute.20260813.030929`. So `apt` does **not** carry the upstream filter today —
+  it arrives at the next `lyrical` release — and saying otherwise would have wasted the minute
+  of every reader who went looking for something already on their disk.
+- **`test/prose_matches_tree.py` CHK-11**, because the fourteen checks above it ran GREEN over
+  all of the above without reading one byte of it. It checks three things a diff does not
+  show: the door files exist; the README still links them (a door nobody can find is not a
+  door, and the file's own diff shows no change when the link is what broke); and the form and
+  `CONTRIBUTING.md` still agree on the four required facts, in both directions. Four negative
+  controls, one per failure mode; the suite is 20/20.
 - ⚑ **`hubot_live_stack/` — the harness this package's largest liveness claim already cited,
   now actually in the repository.** `doc/SOTIF_PERFORMANCE_INSUFFICIENCY.md` discharged the
   real-stack row by pointing at `hubot_live_stack/`. That directory existed on one machine,
