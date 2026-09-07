@@ -67,6 +67,28 @@ compile there at all.)*
 
 Kept rather than deleted, because the argument was published and a reader may have believed it.
 
+⚑ **Which processor — and this page has never said, which is the point.** Every figure above was
+produced on **amd64**. A head unit or a robot is **arm64**, and until 2026-09-07 the words `arm64`,
+`aarch64`, `amd64` and `x86_64` appeared **zero times** anywhere in this repository's documentation —
+inside a bounds list that otherwise names its limits carefully, where silence reads as coverage.
+
+**What is now measured on arm64:** the suite, in a released-nav2 `resolute` clean room built from the
+arm64 half of the very image digest CI pins — **52 tests, 0 errors, 0 failures, 2 skipped**, identical
+to amd64, from a genuine AArch64 build (`ELF64`, `Machine: AArch64`, zero undefined symbols). The
+released nav2 header this package compiles against is **byte-identical** between the two
+architectures, so the compile-time interface does not vary by processor.
+
+⚑ **What is NOT measured on arm64, and it is the part that matters most:** the multi-process
+bring-up. Every one of those 52 tests runs **in a single process**. The live stack — five processes
+that must find each other, which is what a real target actually does — **has never run on arm64 at
+all.** It could not be run here: the emulator this host uses does not implement one socket option
+(`IP_MULTICAST_IF`) that ROS 2 discovery requires, so no two processes ever see each other. That is a
+limitation of the emulator, **not a defect found in this package and not a clean bill of health
+either** — it is simply unmeasured, and it stays unmeasured until this runs on real arm64 silicon.
+And the arm64 result above is **emulated**, not native: the kernel is the host's, the memory model is
+x86's rather than ARM's weaker one, and a missing barrier would pass here and could still fail on real
+hardware.
+
 **Three more bounds, before the pitch rather than after it:**
 
 - ⚑ **It has never run on a robot.** It builds, its plugin loads, its tests drive it
@@ -204,10 +226,12 @@ that number; it never needed to **obtain** it from nav2's header. It is now
 `static_assert`s guard it: one fires on **any** nav2 if upstream renumbers its filters, one fires
 wherever nav2 carries the constant and disagrees with ours. **Measured**: the full nav2
 dependency chain built from tag `1.5.1`; this package built and installed against it; the plugin
-resolved and ran through a live `LayeredCostmap` there. **Building is not passing**: 23 of 26
-tests pass on that release — the three that do not are one pre-existing case identical on
-branch, and two whose *upstream-comparison* arm needs a plugin that exists only on branch.
-`1.5.0` was not built and is not claimed.
+resolved and ran through a live `LayeredCostmap` there. **Measured on every supported
+distribution: 52 tests, 0 errors, 0 failures, 2 skipped.** The two skips are the
+*upstream-comparison* cases, which need a plugin no released nav2 ships; they run and pass on a
+nav2 that carries it. `1.5.0` was not built and is not claimed.
+*(⚑ This paragraph read "23 of 26 tests pass" until 2026-09-07, long after the suite had grown to
+52. A stale count understates the package, which is exactly why nobody notices it.)*
 
 **Do not take our word for it — check your own installation:**
 
@@ -592,11 +616,10 @@ were refuted by that build. It is replaced by `hubot::kZoneParameterFilterType`,
 guarded on every nav2. The record of what it was — the compiler transcript, the check, what
 changed — is in the section near the top of this page and in the changelog, not repeated here.
 
-**What is and is not verified on that release.** The library and every test binary build; 23 of
-26 tests pass; the plugin resolves and runs through a live `LayeredCostmap`. The three that fail
-are one pre-existing case identical on branch, and two whose *upstream-comparison* control loads
-a plugin that exists only on branch. `1.5.0` is not built and not claimed. `rmw_fastrtps_cpp`
-only.
+**What is and is not verified on that release.** The library and every test binary build;
+**52 tests, 0 errors, 0 failures, 2 skipped**; the plugin resolves and runs through a live
+`LayeredCostmap`. The two skips are the *upstream-comparison* cases, which load a plugin no
+released nav2 ships. `1.5.0` is not built and not claimed. `rmw_fastrtps_cpp` only.
 
 ⚑ **A version number will not tell you which nav2 you have.** Tag `1.5.1` (`a6354f3f`) and
 `lyrical` HEAD (`6f23b11c`) both declare `<version>1.5.1</version>`. It no longer decides whether
