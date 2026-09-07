@@ -1,0 +1,7 @@
+# The documented build runs from the repository root, so colcon's three output
+# directories land inside the clone. Without this file `git status` goes from
+# clean to three untracked entries before a reader has edited anything, and the
+# first thing this project shows a newcomer is a dirty tree it created itself.
+build/
+install/
+log/

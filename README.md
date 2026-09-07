@@ -141,8 +141,14 @@ together. That homework is now in the package.
 
 ```bash
 colcon build --packages-select hubot
+source install/setup.bash          # without this the next line cannot find the package
 ros2 launch hubot zone_filter_demo_launch.py
 ```
+
+⚑ **The `source` line is not optional and this page omitted it until 2026-09-08.** Without it
+`ros2 launch` exits 1 with `Package 'hubot' not found` — on every distribution, for every reader,
+as the very first thing they try. It was measured by running the page's own instructions on a cold
+machine, which is the only way that class of defect is ever found.
 
 In another terminal:
 
@@ -329,16 +335,23 @@ deliberate.**
 |---|---|---|
 | `distro floor (…)` | **jazzy, kilted, lyrical** | the package configures, builds and its suite passes on each declared distribution, against that distribution's own released `nav2_costmap_2d`. Asserted in **both** directions: a distribution that starts building while declared unsupported reddens this job too |
 | `suite (released nav2)` | lyrical | the package builds and its ten CTest targets pass against a **released** `nav2_costmap_2d` from `packages.ros.org`, with dependencies resolved from `package.xml` rather than a hand-maintained list |
-| `launch falsifier (bring-up)` | ⚑ **lyrical only** | the shipped launch file actually brings the filter up out of the **install space**, across four cases |
-| `live stack (harness, released nav2)` | ⚑ **lyrical only** | the harness in `hubot_live_stack/` stands up nav2's own `controller_server` and a real `Costmap2DROS` **out of process**, and drives three conditions |
+| `launch falsifier (bring-up)` | **lyrical** in CI; jazzy and kilted measured by hand | the shipped launch file actually brings the filter up out of the **install space**, across four cases |
+| `live stack (harness, released nav2)` | ⚑ **lyrical only** — not yet run elsewhere | the harness in `hubot_live_stack/` stands up nav2's own `controller_server` and a real `Costmap2DROS` **out of process**, and drives three conditions |
 | `negative controls (prose + tree)` | — | the claims on this page are re-derived from the tree, and every check is proven able to fail |
 
-⚑ **So "builds today" in the table above means exactly that, and no more.** On **jazzy** and **kilted**
-what is proven is that the package builds and its suite passes — and every one of those tests runs
-**in a single process**. The bring-up and the multi-process stack are exercised on **lyrical only**.
-They have never been run on jazzy or kilted, and that is a gap in our coverage, not a finding about
-those distributions. If you are integrating on jazzy or kilted, you are the first to bring it up
-there, and we would rather you knew that going in.
+⚑ **What CI covers, and what has merely been measured once — they are not the same thing.** The
+bring-up and the live stack run **in CI on `lyrical` only**. Every test in the suite is
+**single-process**, so the suite alone never answers what a real integrator asks.
+
+⚑ **But the bring-up has been run on jazzy and kilted, by hand, and it passes.** On the official
+upstream `ros:jazzy-ros-base` and `ros:kilted-ros-base` images — bases we did not build — the launch
+falsifier reproduced **all four cases** on both, with the gate's own negative control passing first,
+so the green is not blind. **This page said "lyrical only" until 2026-09-08, and that under-claimed
+what had actually been measured.**
+
+So the honest state: **jazzy and kilted are measured working and are not yet gated.** Nothing on a
+push would tell us the day that stops being true — which is a gap in our instruments, not a doubt
+about those distributions.
 
 ⚑ **The gate has been watched failing on purpose.** A branch carrying a deliberately broken safety
 invariant reddened **only** the job that checks invariants and left the other three green. A gate that
