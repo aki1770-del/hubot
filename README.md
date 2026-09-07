@@ -244,6 +244,44 @@ find_package(hubot REQUIRED)   # or just add it to your workspace and build
 Then select `hubot::ZoneParameterFilter` in your costmap plugin list. It depends on
 `nav2_costmap_2d`; it does not fork or replace anything you already run.
 
+## What proves it, and where to look
+
+**A gate runs on every push and every pull request** — `.github/workflows/gate.yml`, four jobs:
+
+| job | what it decides |
+|---|---|
+| `suite (released nav2)` | the package builds and its ten CTest targets pass against a **released** `nav2_costmap_2d` installed from `packages.ros.org`, with dependencies resolved from `package.xml` rather than from a list someone maintains by hand |
+| `launch falsifier (bring-up)` | the shipped launch file actually brings the filter up out of the **install space**, across four cases |
+| `live stack (harness, released nav2)` | the harness in `hubot_live_stack/` stands up nav2's own `controller_server` and a real `Costmap2DROS` **out of process**, and drives three conditions |
+| `negative controls (prose + tree)` | the claims on this page are re-derived from the tree, and every check is proven able to fail |
+
+⚑ **The gate has been watched failing on purpose.** A branch carrying a deliberately broken safety
+invariant reddened **only** the job that checks invariants and left the other three green. A gate that
+reds on everything satisfies "it went red once" and measures nothing.
+
+### `hubot_live_stack/` — the harness, and why it ships here
+
+The behavioural suite drives this filter through a live `LayeredCostmap` inside a gtest process. That
+is not a robot, and it is not even a running navigation stack. `hubot_live_stack/` is the step up: it
+starts five OS processes — a parameter target node, a scenario support node, a decision observer,
+nav2's own `controller_server`, and a behaviour-tree driver loading nav2's real
+`libnav2_clear_costmap_service_bt_node.so` — so that the costmap's own update thread and the filter's
+independence from it are **exercised rather than argued for**.
+
+⚑ **It is here because a safety document cited it and no reader could obtain it.**
+`doc/SOTIF_PERFORMANCE_INSUFFICIENCY.md` discharged its largest liveness claim by pointing at this
+harness while the harness existed only on one machine, in no repository at all. Every reader followed
+that citation to nothing.
+
+⚑ **And when it was finally run against a released nav2, it failed** — the configuration named a
+controller its manifest never declared, which a source-built image had been supplying by accident. One
+declaration fixed it. **Its runner also used to exit `0` unconditionally**, which is how a total
+lifecycle failure had been reported as three successful runs. Both are corrected, and the CI job above
+is what keeps them corrected.
+
+**What it still is not:** one host, simulated transforms, a synthetic mask, no sensor layers, and no
+goal sent — so the costmap thread is real but the load on it is not. Not a robot. Not hardware.
+
 ## How zones work, if you have not used a costmap filter before
 
 Skip to **What it does about it** if you already run keepout or speed filters — this
@@ -493,10 +531,18 @@ quiet `zone_decision` is no longer the same thing as a healthy one.
 | `unknown` | ⚑ **nobody is watching.** Either the costmap has stopped calling the filter, **or it has not called it yet** — since 2026-09-06 both read the same, because to you they are the same fact. Nothing has failed; nothing is being checked either. See `watching` below |
 | `NO` | a target rejected, threw, or fell silent past `set_parameters_timeout` — or the mask named a state with no configuration |
 
-⚑ **`unknown` was added 2026-09-06 and it is a breaking change to this vocabulary.** It is
-made now, deliberately, because this package has no remotes and no consumer can be holding
-the old set — the cheapest moment it will ever be. **The rule that goes with it is a
-whitelist, and the old blacklist below has been corrected for the same reason.**
+⚑ **`unknown` was added 2026-09-06 and it is a breaking change to this vocabulary.** **The rule
+that goes with it is a whitelist, and the old blacklist below has been corrected for the same
+reason.**
+
+⚑ **The justification this paragraph carried until 2026-09-07 has EXPIRED. It is corrected here
+rather than deleted.** It read: *"It is made now, deliberately, because this package has no remotes
+and no consumer can be holding the old set — the cheapest moment it will ever be."* That was true
+when it was written on 2026-09-06. **It is false now:** this repository is public and has published
+`0.1.0` and `0.1.1`. The change itself stands and is not being re-litigated — but **the reason it
+was cheap has lapsed**, and any future change to this vocabulary must be treated as breaking a
+consumer who may exist, not as free. A justification that expires unread is how a page goes on
+arguing for something the world has already moved past.
 
 ⚑ **`pending` is the window this whole package is built for.** It is the moment the
 robot is entering a zone, the limit has been asked for, and **nobody yet knows whether
