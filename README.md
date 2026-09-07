@@ -78,16 +78,37 @@ to amd64, from a genuine AArch64 build (`ELF64`, `Machine: AArch64`, zero undefi
 released nav2 header this package compiles against is **byte-identical** between the two
 architectures, so the compile-time interface does not vary by processor.
 
-⚑ **What is NOT measured on arm64, and it is the part that matters most:** the multi-process
-bring-up. Every one of those 52 tests runs **in a single process**. The live stack — five processes
-that must find each other, which is what a real target actually does — **has never run on arm64 at
-all.** It could not be run here: the emulator this host uses does not implement one socket option
-(`IP_MULTICAST_IF`) that ROS 2 discovery requires, so no two processes ever see each other. That is a
-limitation of the emulator, **not a defect found in this package and not a clean bill of health
-either** — it is simply unmeasured, and it stays unmeasured until this runs on real arm64 silicon.
-And the arm64 result above is **emulated**, not native: the kernel is the host's, the memory model is
-x86's rather than ARM's weaker one, and a missing barrier would pass here and could still fail on real
-hardware.
+**And the multi-process bring-up runs on arm64 too — on a real ARM kernel.** Every one of those 52
+tests is single-process, so the suite alone never answered the question a real target asks. The live
+stack does: five processes that must discover each other. In a **full-system** arm64 guest — its own
+kernel `7.0.0-31-generic`, built by an `aarch64-linux-gnu` toolchain on an arm64 builder, reporting an
+ARM Ltd Cortex-A76 — all three conditions returned **`configure rc=0 / activate rc=0 / bt_recovery
+rc=0`**, released nav2 logged `Using costmap filter "zone_parameter_filter"`, and the run produced
+real decision transcripts.
+
+⚑ **The negative control is the line worth reading.** A stack with a deliberately broken controller
+returns `configure rc=0, activate rc=1` here — it fails for the reason it is designed to detect. Under
+*user-mode* emulation that same control also went red, but at `configure`, because nothing was
+discoverable at all: it could not tell a broken controller from a broken transport. **The instrument
+only became a discriminating instrument on a real kernel.**
+
+⚑ **What that closes, and what it does not.** It closes the kernel and the memory model: the guest's
+own scheduler, MMU, socket layer and network stack, with real ARM acquire/release ordering and LSE
+atomics — which is the bug class most likely to bite a multi-threaded costmap. **It closes nothing
+about time or hardware.** The guest has no real-time clock and runs without hardware virtualisation,
+so every deadline, timeout, rate and jitter figure from it is meaningless; there is no modelled cache
+hierarchy or store buffer, so a race that needs real reordering can pass here and still fail on a
+board; and the peripherals are paravirtual, so nothing about rendering, CAN, GPIO or any vehicle I/O
+is touched.
+
+The honest one-line form: **builds and runs correctly on a real ARM kernel; real-time behaviour on
+real silicon is untested.**
+
+⚑ *(This paragraph said until 2026-09-07 that the bring-up "has never run on arm64 at all", and gave
+a specific socket option as the reason. The first half is now simply out of date. The second half was
+worse: that mechanism was **never measured** — the two probes that would have isolated it were written
+and never run, which the seat that inherited them found and said so. It was inference published in the
+register of measurement, and it is withdrawn rather than quietly replaced.)*
 
 **Three more bounds, before the pitch rather than after it:**
 
