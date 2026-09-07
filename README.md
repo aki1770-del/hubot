@@ -310,14 +310,24 @@ Then select `hubot::ZoneParameterFilter` in your costmap plugin list. It depends
 
 ## What proves it, and where to look
 
-**A gate runs on every push and every pull request** — `.github/workflows/gate.yml`, four jobs:
+**A gate runs on every push and every pull request** — `.github/workflows/gate.yml`. ⚑ **Read the
+right-hand column: the jobs do not all cover the same distributions, and that asymmetry is
+deliberate.**
 
-| job | what it decides |
-|---|---|
-| `suite (released nav2)` | the package builds and its ten CTest targets pass against a **released** `nav2_costmap_2d` installed from `packages.ros.org`, with dependencies resolved from `package.xml` rather than from a list someone maintains by hand |
-| `launch falsifier (bring-up)` | the shipped launch file actually brings the filter up out of the **install space**, across four cases |
-| `live stack (harness, released nav2)` | the harness in `hubot_live_stack/` stands up nav2's own `controller_server` and a real `Costmap2DROS` **out of process**, and drives three conditions |
-| `negative controls (prose + tree)` | the claims on this page are re-derived from the tree, and every check is proven able to fail |
+| job | distributions | what it decides |
+|---|---|---|
+| `distro floor (…)` | **jazzy, kilted, lyrical** | the package configures, builds and its suite passes on each declared distribution, against that distribution's own released `nav2_costmap_2d`. Asserted in **both** directions: a distribution that starts building while declared unsupported reddens this job too |
+| `suite (released nav2)` | lyrical | the package builds and its ten CTest targets pass against a **released** `nav2_costmap_2d` from `packages.ros.org`, with dependencies resolved from `package.xml` rather than a hand-maintained list |
+| `launch falsifier (bring-up)` | ⚑ **lyrical only** | the shipped launch file actually brings the filter up out of the **install space**, across four cases |
+| `live stack (harness, released nav2)` | ⚑ **lyrical only** | the harness in `hubot_live_stack/` stands up nav2's own `controller_server` and a real `Costmap2DROS` **out of process**, and drives three conditions |
+| `negative controls (prose + tree)` | — | the claims on this page are re-derived from the tree, and every check is proven able to fail |
+
+⚑ **So "builds today" in the table above means exactly that, and no more.** On **jazzy** and **kilted**
+what is proven is that the package builds and its suite passes — and every one of those tests runs
+**in a single process**. The bring-up and the multi-process stack are exercised on **lyrical only**.
+They have never been run on jazzy or kilted, and that is a gap in our coverage, not a finding about
+those distributions. If you are integrating on jazzy or kilted, you are the first to bring it up
+there, and we would rather you knew that going in.
 
 ⚑ **The gate has been watched failing on purpose.** A branch carrying a deliberately broken safety
 invariant reddened **only** the job that checks invariants and left the other three green. A gate that
