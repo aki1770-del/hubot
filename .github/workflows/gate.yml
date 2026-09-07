@@ -420,6 +420,42 @@ jobs:
 
       - uses: ./.github/actions/ros-substrate
 
+      # ⚑ apt-get update, AND IT IS THE OPPOSITE OF BOILERPLATE: ITS ABSENCE IS THE
+      # ONLY RED THIS JOB HAS EVER HAD. Runs 34109685952 and 34109690179, both on
+      # PR #1, died here in 0.33 s with
+      #     E: Unable to locate package <the first key this job adds>
+      # and that message is a liar. The shared substrate action above ends by
+      # deleting /var/lib/apt/lists/* -- correct for IT, since it has finished
+      # installing and the lists are tens of MB it does not need. But apt's message
+      # for "I have no package lists" is byte-identical to its message for "that
+      # package does not exist", so the failure reads as a bad dependency key and is
+      # not one. Measured 2026-09-07 against the live feed
+      # (dists/resolute/main/binary-amd64/Packages.gz, 46156 lines): every key this
+      # job adds IS served. The manifest was right, the feed was right, apt had
+      # nothing to read.
+      #
+      # ⚑ AND THE REASON THE LOCAL VERIFICATION MISSED IT IS WORTH MORE THAN THE FIX.
+      # This job was proven green in a container that ran the substrate action's
+      # install steps but not its last line, because that loom was TYPED from the
+      # action rather than extracted from it. A reproduction that diverges from the
+      # thing it reproduces proves nothing about it -- and it will diverge exactly
+      # where a human's eye skips, which is the teardown. The loom now generates its
+      # substrate by parsing this action's YAML.
+      - name: apt lists, which the shared action deletes on its way out
+        shell: bash
+        run: |
+          set -eux
+          apt-get update -qq
+          # Fail with the true diagnosis rather than apt's misleading one. No package
+          # is named here on purpose: a name written into this workflow is a second
+          # dependency list being born, which is what CHK-10 exists to stop.
+          n=$(ls -1 /var/lib/apt/lists/*_Packages* 2>/dev/null | wc -l)
+          if [ "$n" -eq 0 ]; then
+            echo "apt has NO package lists. Every install below would report" >&2
+            echo "'Unable to locate package', which is not what it means." >&2
+            exit 1
+          fi
+
       # ⚑ A SECOND rosdep CALL, AND THE REASON IS NOT TIDINESS.
       # colcon and rosdep both stop crawling at the first package.xml on a path.
       # This repository's ROOT is a package, so `hubot_live_stack/` -- which lives

@@ -31,6 +31,13 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
   show. It also declared `nav2_lifecycle_manager`, which nothing in the package uses, and did
   not declare the `ros2` CLI verb packages its own shipped script invokes.
 
+- **The `live-stack` job's first two runs were RED, and the error message was a liar.**
+  The shared substrate action ends by deleting `/var/lib/apt/lists/*`; any later step
+  that installs a package then gets `E: Unable to locate package <x>`, which is what
+  apt also says for a package that does not exist. It exists. The job restores the
+  lists before its own rosdep call, and refuses with the true diagnosis if they are
+  ever empty again.
+
 ### Notes for integrators
 - ⚑ **`hubot_live_stack` is INVISIBLE to a plain `colcon build`.** This repository's root is
   itself a package, and colcon's crawl stops at the first `package.xml` on a path. Worse than
