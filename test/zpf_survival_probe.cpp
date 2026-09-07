@@ -60,8 +60,7 @@
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
-#include "nav2_ros_common/lifecycle_node.hpp"
-#include "nav2_ros_common/tf2_factories.hpp"
+#include "hubot/nav2_compat.hpp"
 #include "geometry_msgs/msg/pose.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "rcl_interfaces/msg/parameter_descriptor.hpp"
@@ -229,19 +228,19 @@ int main(int argc, char ** argv)
     opts.parameter_overrides(overrides);
 
     std::shared_ptr<nav2_costmap_2d::LayeredCostmap> layers;
-    nav2::LifecycleNode::SharedPtr node;
-    nav2::TransformBuffer::SharedPtr tf_buffer;
+    std::shared_ptr<hubot::HostNode> node;
+    std::shared_ptr<tf2_ros::Buffer> tf_buffer;
     std::shared_ptr<hubot::ZoneParameterFilter> filter;
     std::shared_ptr<InfoPublisher> info_pub;
     std::shared_ptr<MaskPublisher> mask_pub;
 
     // Setup only. The drive loop below is deliberately NOT inside this try.
     try {
-      node = std::make_shared<nav2::LifecycleNode>("zpf_survival_host", opts);
+      node = std::make_shared<hubot::HostNode>("zpf_survival_host", "", opts);
       node_executor.add_node(node->get_node_base_interface());
 
       layers = std::make_shared<nav2_costmap_2d::LayeredCostmap>("map", false, false);
-      tf_buffer = nav2::create_transform_buffer(node);
+      tf_buffer = hubot::createTransformBuffer(node);
       tf_buffer->setUsingDedicatedThread(true);
 
       filter = std::make_shared<hubot::ZoneParameterFilter>();

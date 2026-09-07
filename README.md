@@ -421,8 +421,8 @@ keeps ticking. On that path nothing is swallowed and nothing takes the node down
 
 ⚑ **Scoped 2026-09-06; it used to be unqualified.** Three
 `throw std::runtime_error{"Failed to lock node"}` remain, at
-`src/zone_parameter_filter.cpp:105` (`initializeFilter`), `:270` (`filterInfoCallback`) and
-`:339` (`loadStateConfig`). None is on the `process()` / `updateCosts()` path that this
+`src/zone_parameter_filter.cpp:118` (`initializeFilter`), `:314` (`filterInfoCallback`) and
+`:397` (`loadStateConfig`). None is on the `process()` / `updateCosts()` path that this
 package is about, and the upstream filter carries the same three — but nothing above them
 handles an exception either, so "nothing takes the node down" was more than we had shown.
 

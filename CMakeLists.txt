@@ -18,7 +18,22 @@ find_package(pluginlib REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(nav2_util REQUIRED)
-find_package(nav2_ros_common REQUIRED)
+
+# ⚑ OPTIONAL SINCE 2026-09-07, AND THAT IS THE WHOLE PORT TO jazzy AND kilted.
+# `find_package(nav2_ros_common REQUIRED)` on this line is what failed in about
+# one second on both of them: the package first exists at nav2 1.5.0, and
+# neither ros-jazzy-nav2-ros-common nor ros-kilted-nav2-ros-common is published
+# at all. The package's own use of it turned out to be four type aliases and a
+# QoS preset (see include/hubot/nav2_compat.hpp), so the requirement was ours,
+# not the job's. QUIET, not REQUIRED, and the result is a MEASUREMENT: the
+# availability of the package IS the fact the code below needs to know.
+find_package(nav2_ros_common QUIET)
+if(nav2_ros_common_FOUND)
+  message(STATUS "hubot: nav2_ros_common present -- nav2 >= 1.5.0 line")
+else()
+  message(STATUS
+    "hubot: nav2_ros_common absent -- pre-1.5.0 nav2 (jazzy 1.3.12 / kilted 1.4.2)")
+endif()
 find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
@@ -34,7 +49,6 @@ target_link_libraries(hubot_costmap_filters PUBLIC
   nav2_costmap_2d::nav2_costmap_2d_core
   nav2_costmap_2d::filters
   nav2_util::nav2_util_core
-  nav2_ros_common::nav2_ros_common
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
   pluginlib::pluginlib
@@ -46,6 +60,53 @@ target_link_libraries(hubot_costmap_filters PUBLIC
   ${geometry_msgs_TARGETS}
   ${rcl_interfaces_TARGETS})
 
+include(CheckCXXSourceCompiles)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚑ TWO DISTRO PROBES, ADDED 2026-09-07. Each measures the fact it guards.
+#
+# They are NOT one probe with two consumers, and not a version comparison. This
+# file already records why a version number cannot answer questions like these
+# -- tag 1.5.1 and branch HEAD both declare "1.5.1" -- and two facts that happen
+# to have changed in the same upstream release are still two facts.
+#
+# The compile probe below has a working NEGATIVE control, which is the only
+# reason it is worth running: measured 2026-09-07 it returns 1 on jazzy
+# (nav2_costmap_2d 1.3.12) and empty on released 1.5.1. A probe that cannot come
+# back false has measured nothing.
+# ─────────────────────────────────────────────────────────────────────────────
+if(nav2_ros_common_FOUND)
+  # Consumed by include/hubot/nav2_compat.hpp to pick the lifecycle-node class a
+  # `Layer` will accept: nav2_util::LifecycleNode before 1.5.0, nav2::LifecycleNode
+  # after. PUBLIC so the test targets, which host the filter, see the same answer
+  # the filter does.
+  target_compile_definitions(hubot_costmap_filters PUBLIC HUBOT_NAV2_HAS_ROS_COMMON=1)
+  target_link_libraries(hubot_costmap_filters PUBLIC nav2_ros_common::nav2_ros_common)
+endif()
+
+# ⚑ THERE IS NO CMAKE PROBE FOR `CostmapFilter::worldToMask()`, AND THE REASON
+# IS ON THE RECORD RATHER THAN OMITTED.
+#
+# One was written here first: a `check_cxx_source_compiles` deriving from
+# CostmapFilter to reach the protected member. Its POSITIVE control -- merely
+# `#include <nav2_costmap_2d/costmap_filters/costmap_filter.hpp>` and nothing
+# else -- came back FALSE on all three distros, measured 2026-09-07, because
+# `CMAKE_REQUIRED_INCLUDES` cannot be given that header's transitive include
+# closure at configure time (it stopped at
+# `rosidl_runtime_cpp/bounded_vector.hpp: No such file or directory`), and
+# `CMAKE_REQUIRED_LIBRARIES` with the imported targets fails differently on
+# CMake 4.2 with "No known features for C compiler". Every result that probe
+# produced was FALSE FOR THE WRONG REASON -- including on jazzy, where the
+# member is present -- and shipping it would have chosen the wrong branch on
+# exactly the distros this port is for.
+#
+# The choice is made in src/zone_parameter_filter.cpp with `__has_include`
+# instead, and that file explains why a header test is honest THERE and was not
+# honest for the ZONE_PARAMETER_FILTER probe below: both of its branches are a
+# real call that the compiler checks, so a wrong guess is a build error, not a
+# silent wrong answer. That is the whole difference, and it is the reason the
+# rule "probe the symbol, not the header" does not extend to this one.
+
 # ⚑ DOES THIS nav2 CARRY ZONE_PARAMETER_FILTER? Probe the SYMBOL, not the header.
 # `filter_values.hpp` exists at release tag 1.5.1 AND on branch HEAD; only the
 # branch defines the constant inside it. So `__has_include` cannot tell them
@@ -55,7 +116,6 @@ target_link_libraries(hubot_costmap_filters PUBLIC
 # carry the constant, a value disagreement is a compile error rather than a
 # silent wire mismatch; where it does not, hubot's own discriminator stands
 # alone and the always-on BINARY_FILTER+1 cross-check still fires.
-include(CheckCXXSourceCompiles)
 set(CMAKE_REQUIRED_INCLUDES ${nav2_costmap_2d_INCLUDE_DIRS})
 set(CMAKE_REQUIRED_FLAGS "-std=c++17")
 check_cxx_source_compiles("
@@ -104,7 +164,6 @@ if(BUILD_TESTING)
     nav2_costmap_2d::nav2_costmap_2d_core
     nav2_costmap_2d::filters
     nav2_util::nav2_util_core
-    nav2_ros_common::nav2_ros_common
     rclcpp::rclcpp
     rclcpp_lifecycle::rclcpp_lifecycle
     pluginlib::pluginlib

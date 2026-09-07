@@ -26,7 +26,20 @@
 #include <vector>
 
 #include "nav2_costmap_2d/costmap_filters/filter_values.hpp"
+#if __has_include("nav2_util/occ_grid_utils.hpp")
 #include "nav2_util/occ_grid_utils.hpp"
+#define HUBOT_HAS_NAV2_UTIL_WORLD_TO_MAP 1
+#else
+#define HUBOT_HAS_NAV2_UTIL_WORLD_TO_MAP 0
+#endif
+
+// ⚑ `nav2_util/occ_grid_utils.hpp` is included above only where this nav2's
+// CostmapFilter has stopped carrying worldToMask(). It was unconditional until
+// 2026-09-07, and that alone would have failed the build on two of three
+// distros: the header ships from nav2 1.5.0 onward, and on jazzy (nav2_util
+// 1.3.12) and kilted (1.4.2) the nav2_util include directory does not contain
+// it at all -- measured by `ls` on both. The call goes through maskWorldToMap()
+// at the bottom of this file, which is where the fork is explained.
 
 namespace hubot
 {
@@ -104,10 +117,25 @@ void ZoneParameterFilter::initializeFilter(
   if (!node) {
     throw std::runtime_error{"Failed to lock node"};
   }
+  // ⚑ THE WHOLE PORT, IN ONE LINE. `Layer::node_` is a weak pointer to
+  // `nav2_util::LifecycleNode` on jazzy and kilted (layer.hpp:169) and to
+  // `nav2::LifecycleNode` on 1.5.x (layer.hpp:186). Both derive publicly from
+  // `rclcpp_lifecycle::LifecycleNode`, so this conversion is an identity on the
+  // older lines and an upcast on the newer one -- and every call below is then
+  // spelled once, in rclcpp, with no fork anywhere.
+  //
+  // It also fixes a name-hiding trap rather than working around one:
+  // `nav2::LifecycleNode` declares its own `create_subscription(topic, CALLBACK,
+  // qos)` (nav2_ros_common/lifecycle_node.hpp:155-159), which HIDES the base's
+  // `create_subscription(topic, QOS, callback)` -- the arguments are in the
+  // opposite order. Calling through the base makes the order the one every
+  // rclcpp reader already knows, on all three distros.
+  const rclcpp_lifecycle::LifecycleNode::SharedPtr base = node;
 
   global_frame_ = layered_costmap_->getGlobalFrameID();
   state_event_topic_ =
-    node->declare_or_get_parameter<std::string>(
+    hubot::declareOrGetParameter<std::string>(
+    base,
     name_ + "." + "state_event_topic", std::string("zone_filter_state"));
 
   // ⚑ How long a set_parameters round-trip may take before the target is
@@ -117,7 +145,8 @@ void ZoneParameterFilter::initializeFilter(
   // guess about somebody else's robot; disabling it is a choice an integrator
   // should have to make on purpose.
   set_parameters_timeout_ =
-    node->declare_or_get_parameter<double>(
+    hubot::declareOrGetParameter<double>(
+    base,
     name_ + "." + "set_parameters_timeout", 5.0);
   if (set_parameters_timeout_ <= 0.0) {
     RCLCPP_WARN(
@@ -132,10 +161,12 @@ void ZoneParameterFilter::initializeFilter(
   // what is being given up. Disabling a detector should be a choice somebody
   // makes on purpose and can be found doing.
   liveness_period_ =
-    node->declare_or_get_parameter<double>(
+    hubot::declareOrGetParameter<double>(
+    base,
     name_ + "." + "liveness_period", 1.0);
   costmap_silence_timeout_ =
-    node->declare_or_get_parameter<double>(
+    hubot::declareOrGetParameter<double>(
+    base,
     name_ + "." + "costmap_silence_timeout", 2.0);
   if (liveness_period_ <= 0.0) {
     RCLCPP_WARN(
@@ -180,19 +211,32 @@ void ZoneParameterFilter::initializeFilter(
       costmap_silence_timeout_, declaredValidForS());
   }
 
-  filter_info_topic_ = joinWithParentNamespace(filter_info_topic);
+  filter_info_topic_ = joinParentNamespace(base, filter_info_topic);
   RCLCPP_INFO(
     logger_,
     "ZoneParameterFilter: Subscribing to \"%s\" topic for filter info...",
     filter_info_topic_.c_str());
 
-  filter_info_sub_ = node->create_subscription<nav2_msgs::msg::CostmapFilterInfo>(
+  // ⚑ ARGUMENT ORDER IS rclcpp's: (topic, qos, callback). nav2's own wrapper puts
+  // the callback second; the base class puts the QoS second. Calling through
+  // `base` picks the rclcpp order deliberately -- it is the order that is the
+  // same on jazzy, kilted and lyrical, and the one a reader of any other ROS 2
+  // package already has in their hands.
+  filter_info_sub_ = base->create_subscription<nav2_msgs::msg::CostmapFilterInfo>(
     filter_info_topic_,
-    std::bind(&ZoneParameterFilter::filterInfoCallback, this, std::placeholders::_1),
-    nav2::qos::LatchedSubscriptionQoS());
+    hubot::latchedSubscriptionQoS(),
+    std::bind(&ZoneParameterFilter::filterInfoCallback, this, std::placeholders::_1));
 
-  state_event_pub_ =
-    node->create_publisher<std_msgs::msg::UInt8>(joinWithParentNamespace(state_event_topic_));
+  // ⚑ THE QoS IS NOW WRITTEN DOWN. This was a one-argument call that inherited
+  // `nav2::qos::StandardTopicQoS()` -- KeepLast(10), reliable, volatile
+  // (qos_profiles.hpp:30-43, read 2026-09-07). Reproduced exactly, in rclcpp,
+  // so the policy this publisher offers is legible at the call instead of
+  // three headers away and only on one distro.
+  rclcpp::QoS state_event_qos(rclcpp::KeepLast(10));
+  state_event_qos.reliable();
+  state_event_qos.durability_volatile();
+  state_event_pub_ = base->create_publisher<std_msgs::msg::UInt8>(
+    joinParentNamespace(base, state_event_topic_), state_event_qos);
   state_event_pub_->on_activate();
 
   // ⚑ HUBOT — the human-decision surface, created beside the robot's one.
@@ -231,8 +275,8 @@ void ZoneParameterFilter::initializeFilter(
     // two channels. See declaredValidForS().
     decision_qos.deadline(rclcpp::Duration::from_seconds(declaredValidForS()));
   }
-  decision_pub_ = node->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
-    joinWithParentNamespace(decision_topic_), decision_qos);
+  decision_pub_ = base->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+    joinParentNamespace(base, decision_topic_), decision_qos);
   decision_pub_->on_activate();
 
   loadStateConfig();
@@ -248,7 +292,7 @@ void ZoneParameterFilter::initializeFilter(
   ever_processed_.store(false);
   costmap_silent_.store(false);
   if (liveness_period_ > 0.0) {
-    liveness_timer_ = node->create_wall_timer(
+    liveness_timer_ = base->create_wall_timer(
       std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::duration<double>(liveness_period_)),
       std::bind(&ZoneParameterFilter::livenessTick, this));
@@ -269,6 +313,20 @@ void ZoneParameterFilter::filterInfoCallback(
   if (!node) {
     throw std::runtime_error{"Failed to lock node"};
   }
+  // ⚑ THE WHOLE PORT, IN ONE LINE. `Layer::node_` is a weak pointer to
+  // `nav2_util::LifecycleNode` on jazzy and kilted (layer.hpp:169) and to
+  // `nav2::LifecycleNode` on 1.5.x (layer.hpp:186). Both derive publicly from
+  // `rclcpp_lifecycle::LifecycleNode`, so this conversion is an identity on the
+  // older lines and an upcast on the newer one -- and every call below is then
+  // spelled once, in rclcpp, with no fork anywhere.
+  //
+  // It also fixes a name-hiding trap rather than working around one:
+  // `nav2::LifecycleNode` declares its own `create_subscription(topic, CALLBACK,
+  // qos)` (nav2_ros_common/lifecycle_node.hpp:155-159), which HIDES the base's
+  // `create_subscription(topic, QOS, callback)` -- the arguments are in the
+  // opposite order. Calling through the base makes the order the one every
+  // rclcpp reader already knows, on all three distros.
+  const rclcpp_lifecycle::LifecycleNode::SharedPtr base = node;
 
   if (!mask_sub_) {
     RCLCPP_INFO(
@@ -300,16 +358,16 @@ void ZoneParameterFilter::filterInfoCallback(
   }
 
   filter_info_received_ = true;
-  mask_topic_ = joinWithParentNamespace(msg->filter_mask_topic);
+  mask_topic_ = joinParentNamespace(base, msg->filter_mask_topic);
 
   RCLCPP_INFO(
     logger_,
     "ZoneParameterFilter: Subscribing to \"%s\" topic for filter mask...",
     mask_topic_.c_str());
-  mask_sub_ = node->create_subscription<nav_msgs::msg::OccupancyGrid>(
+  mask_sub_ = base->create_subscription<nav_msgs::msg::OccupancyGrid>(
     mask_topic_,
-    std::bind(&ZoneParameterFilter::maskCallback, this, std::placeholders::_1),
-    nav2::qos::LatchedSubscriptionQoS(3));
+    hubot::latchedSubscriptionQoS(3),
+    std::bind(&ZoneParameterFilter::maskCallback, this, std::placeholders::_1));
 }
 
 void ZoneParameterFilter::maskCallback(
@@ -338,14 +396,28 @@ void ZoneParameterFilter::loadStateConfig()
   if (!node) {
     throw std::runtime_error{"Failed to lock node"};
   }
+  // ⚑ THE WHOLE PORT, IN ONE LINE. `Layer::node_` is a weak pointer to
+  // `nav2_util::LifecycleNode` on jazzy and kilted (layer.hpp:169) and to
+  // `nav2::LifecycleNode` on 1.5.x (layer.hpp:186). Both derive publicly from
+  // `rclcpp_lifecycle::LifecycleNode`, so this conversion is an identity on the
+  // older lines and an upcast on the newer one -- and every call below is then
+  // spelled once, in rclcpp, with no fork anywhere.
+  //
+  // It also fixes a name-hiding trap rather than working around one:
+  // `nav2::LifecycleNode` declares its own `create_subscription(topic, CALLBACK,
+  // qos)` (nav2_ros_common/lifecycle_node.hpp:155-159), which HIDES the base's
+  // `create_subscription(topic, QOS, callback)` -- the arguments are in the
+  // opposite order. Calling through the base makes the order the one every
+  // rclcpp reader already knows, on all three distros.
+  const rclcpp_lifecycle::LifecycleNode::SharedPtr base = node;
 
   // Obtain the node, parameter, and value for state entries
   auto read_entry =
     [&](const std::string & prefix) -> std::optional<StateParamEntry> {
       const std::string target_node_declared =
-        node->declare_or_get_parameter<std::string>(prefix + ".node", std::string(""));
+        hubot::declareOrGetParameter<std::string>(base, prefix + ".node", std::string(""));
       const std::string param_name =
-        node->declare_or_get_parameter<std::string>(prefix + ".parameter", std::string(""));
+        hubot::declareOrGetParameter<std::string>(base, prefix + ".parameter", std::string(""));
       if (target_node_declared.empty() || param_name.empty()) {
         RCLCPP_ERROR(
           logger_,
@@ -354,7 +426,7 @@ void ZoneParameterFilter::loadStateConfig()
         return std::nullopt;
       }
       // ⚑ THE INTEGRATOR'S NAME GETS THE SAME LOOM AS OURS -- added 2026-09-06.
-      // We called joinWithParentNamespace() on all FOUR of our own topic names
+      // We called joinParentNamespace() on all FOUR of our own topic names
       // (:130, :142, :147, :215) and on ZERO of theirs, so a relative
       // `node: controller_server` was handed to rclcpp raw. A parameter client
       // was then built for a node that does not exist, and the
@@ -384,7 +456,7 @@ void ZoneParameterFilter::loadStateConfig()
       // release tag 1.5.1), so a configuration that works today keeps working.
       // The join is deliberately AFTER the empty-check above: it maps "" to
       // "<parent>/", which is non-empty, and would silently defeat that guard.
-      const std::string target_node = joinWithParentNamespace(target_node_declared);
+      const std::string target_node = joinParentNamespace(base, target_node_declared);
       // Remember the mapping ONLY where the join actually moved the name: that
       // is exactly the case where the failure sentence would otherwise name
       // something the integrator cannot find in her own YAML. Where two
@@ -399,12 +471,12 @@ void ZoneParameterFilter::loadStateConfig()
         }
       }
       const std::string value_key = prefix + ".value";
-      if (!node->has_parameter(value_key)) {
+      if (!base->has_parameter(value_key)) {
         rcl_interfaces::msg::ParameterDescriptor descriptor;
         descriptor.dynamic_typing = true;
-        node->declare_parameter(value_key, rclcpp::ParameterValue{}, descriptor);
+        base->declare_parameter(value_key, rclcpp::ParameterValue{}, descriptor);
       }
-      const rclcpp::Parameter value_param = node->get_parameter(value_key);
+      const rclcpp::Parameter value_param = base->get_parameter(value_key);
       if (value_param.get_type() == rclcpp::ParameterType::PARAMETER_NOT_SET) {
         RCLCPP_ERROR(logger_, "ZoneParameterFilter: '%s' is not set.", value_key.c_str());
         return std::nullopt;
@@ -414,7 +486,8 @@ void ZoneParameterFilter::loadStateConfig()
     };
 
   const std::vector<std::string> state_names =
-    node->declare_or_get_parameter<std::vector<std::string>>(
+    hubot::declareOrGetParameter<std::vector<std::string>>(
+      base,
     name_ + ".states", std::vector<std::string>{});
 
   if (state_names.empty()) {
@@ -428,7 +501,7 @@ void ZoneParameterFilter::loadStateConfig()
     const std::string state_prefix = name_ + "." + state_name;
 
     const int64_t id_i64 =
-      node->declare_or_get_parameter<int64_t>(state_prefix + ".id", 0);
+      hubot::declareOrGetParameter<int64_t>(base, state_prefix + ".id", static_cast<int64_t>(0));
     if (id_i64 <= 0 || id_i64 > 255) {
       RCLCPP_ERROR(
         logger_,
@@ -440,7 +513,8 @@ void ZoneParameterFilter::loadStateConfig()
     const uint8_t state_id = static_cast<uint8_t>(id_i64);
 
     const std::vector<std::string> setpoint_names =
-      node->declare_or_get_parameter<std::vector<std::string>>(
+      hubot::declareOrGetParameter<std::vector<std::string>>(
+      base,
       state_prefix + ".setpoints", std::vector<std::string>{});
 
     std::vector<StateParamEntry> params_for_state;
@@ -466,7 +540,8 @@ void ZoneParameterFilter::loadStateConfig()
 
   // `nominal_defaults`: the baseline values restored on the state-0 reset.
   const std::vector<std::string> nominal_names =
-    node->declare_or_get_parameter<std::vector<std::string>>(
+    hubot::declareOrGetParameter<std::vector<std::string>>(
+      base,
     name_ + ".nominal_defaults", std::vector<std::string>{});
   for (const auto & nominal_name : nominal_names) {
     if (auto entry = read_entry(name_ + ".nominal_defaults." + nominal_name)) {
@@ -518,10 +593,10 @@ void ZoneParameterFilter::loadStateConfig()
     param_clients_.emplace(
       target_node,
       std::make_shared<rclcpp::AsyncParametersClient>(
-        node->get_node_base_interface(),
-        node->get_node_topics_interface(),
-        node->get_node_graph_interface(),
-        node->get_node_services_interface(),
+        base->get_node_base_interface(),
+        base->get_node_topics_interface(),
+        base->get_node_graph_interface(),
+        base->get_node_services_interface(),
         target_node));
   }
   RCLCPP_INFO(
@@ -552,7 +627,7 @@ void ZoneParameterFilter::loadStateConfig()
 void ZoneParameterFilter::process(
   nav2_costmap_2d::Costmap2D & /*master_grid*/,
   int /*min_i*/, int /*min_j*/, int /*max_i*/, int /*max_j*/,
-  const geometry_msgs::msg::Pose & pose)
+  const hubot::FilterPose & pose)
 {
   std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
 
@@ -585,14 +660,18 @@ void ZoneParameterFilter::process(
     return;
   }
 
-  geometry_msgs::msg::Pose mask_pose;
+  // ⚑ `FilterPose` is `Pose2D` through nav2 1.4.2 and `Pose` from 1.5.0 -- the one
+  // difference between the distros that reaches this filter's own logic. The
+  // accessors below are the only place that knows, and `transformPose()` takes
+  // and returns whichever type its own CostmapFilter declares.
+  hubot::FilterPose mask_pose;
   if (!transformPose(global_frame_, pose, filter_mask_->header.frame_id, mask_pose)) {
     return;
   }
 
   unsigned int mask_robot_i, mask_robot_j;
-  if (!nav2_util::worldToMap(
-      filter_mask_, mask_pose.position.x, mask_pose.position.y,
+  if (!maskWorldToMap(
+      filter_mask_, hubot::poseX(mask_pose), hubot::poseY(mask_pose),
       mask_robot_i, mask_robot_j))
   {
     if (state_initialized_ && current_state_ != 0) {
@@ -1520,6 +1599,65 @@ bool ZoneParameterFilter::isActive()
 {
   std::lock_guard<nav2_costmap_2d::CostmapFilter::mutex_t> guard(*getMutex());
   return filter_mask_ != nullptr;
+}
+
+std::string ZoneParameterFilter::joinParentNamespace(
+  const rclcpp_lifecycle::LifecycleNode::SharedPtr & node, const std::string & topic)
+{
+  // ⚑ nav2's own Layer::joinWithParentNamespace() on kilted and lyrical, and
+  // upstream's own body from tag 1.4.2 on jazzy, which has no such member
+  // anywhere in its headers. Chosen by ranked overload on whether the member
+  // exists, not by a version test -- see include/hubot/nav2_compat.hpp (3b).
+  //
+  // ⚑ IT TAKES THE NODE RATHER THAN LOCKING node_ ITSELF, AND THE REASON IS A
+  // GATE, NOT A PREFERENCE. Locking here would have added a FOURTH
+  // `throw std::runtime_error{"Failed to lock node"}` to this file -- and
+  // CHK-1 in test/prose_matches_tree.py compares the README's citation against
+  // the tree's throw lines through a regex that captures exactly THREE. A
+  // fourth site does not make that check red in a way prose can repair; it
+  // makes it UNSATISFIABLE. Widening the gate to fit the code would have been
+  // the wrong direction: every caller already holds a locked node, so the lock
+  // was redundant as well as expensive.
+  return hubot::joinParentNamespace(this, node, topic);
+}
+
+bool ZoneParameterFilter::maskWorldToMap(
+  nav_msgs::msg::OccupancyGrid::ConstSharedPtr mask,
+  double wx, double wy, unsigned int & mx, unsigned int & my) const
+{
+  // ⚑ THE ONLY FUNCTION UPSTREAM MOVED *OUT* OF THE BASE CLASS.
+  //
+  // Through nav2 1.4.2 this is a protected member of our own base --
+  // `CostmapFilter::worldToMask()`, costmap_filter.hpp:197 (jazzy) / :198
+  // (kilted) -- reachable only from inside a derived class. At 1.5.x that
+  // member is gone from the header entirely and the identical body is the free
+  // `nav2_util::worldToMap()` in nav2_util/occ_grid_utils.hpp:56, a header that
+  // does not exist on the older lines.
+  //
+  // Signature, parameter names, doc comment and arithmetic are the same in both
+  // -- read side by side 2026-09-07. Neither is re-implemented here: whichever
+  // one this distro ships is the one that runs, so a future change to upstream's
+  // bounds handling reaches this filter on every line it builds on, instead of
+  // reaching a private copy that has quietly stopped agreeing with it.
+  //
+  // ⚑ WHY A HEADER TEST IS HONEST HERE AND IS NOT HONEST FOR THE
+  // ZONE_PARAMETER_FILTER PROBE IN CMakeLists.txt. That one had to reject
+  // `__has_include` because filter_values.hpp exists in BOTH cases and only the
+  // constant inside it differs -- so the header's presence would have stood in
+  // for a fact it does not carry, and a wrong answer there is a SILENT wire
+  // mismatch at runtime. Here both branches are an ordinary call the compiler
+  // type-checks: if the header is present the function it declares is used, and
+  // if it is absent the base-class member is used. A wrong guess cannot be
+  // silent -- it is a build error naming the missing name, on the machine of
+  // whoever changed the world. That difference is the whole justification, and
+  // a CMake probe that could have measured the member directly was attempted
+  // first and abandoned because its own positive control failed; CMakeLists.txt
+  // records that attempt rather than hiding it.
+#if HUBOT_HAS_NAV2_UTIL_WORLD_TO_MAP
+  return nav2_util::worldToMap(mask, wx, wy, mx, my);
+#else
+  return worldToMask(mask, wx, wy, mx, my);
+#endif
 }
 
 }  // namespace hubot

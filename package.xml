@@ -49,7 +49,24 @@
        comment, and the first draft of this note used the flag's real spelling
        and made package.xml unparseable.) -->
   <depend>nav2_util</depend>
-  <depend>nav2_ros_common</depend>
+  <!-- ⚑ CONDITIONAL SINCE 2026-09-07 (CPP). nav2_ros_common first exists at nav2
+       1.5.0; measured against both distributions' real published package
+       indexes, no ros-jazzy-nav2-ros-common and no ros-kilted-nav2-ros-common
+       is published at all, while 63 jazzy and 62 kilted nav2 packages were
+       found on the same read - - so the index parsed and the package is simply
+       absent. Declaring it unconditionally made `rosdep install` fail on the
+       two distributions this package now supports, which is the same defect,
+       mirrored, as the one the note above records: a manifest that names a
+       package the reader cannot install is as bad as a build file that needs
+       one the manifest never names.
+       CMakeLists.txt matches this with `find_package(nav2_ros_common QUIET)`
+       and the code needs nothing from it - - see include/hubot/nav2_compat.hpp.
+       The condition names the two distributions that lack it rather than the
+       ones that have it, so a FUTURE distribution inherits the dependency by
+       default and a reader adding one does not have to remember this line.
+       (Written without a double hyphen, per the two notes above: XML forbids
+       one inside a comment.) -->
+  <depend condition="$ROS_DISTRO != jazzy and $ROS_DISTRO != kilted">nav2_ros_common</depend>
   <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
   <depend>diagnostic_msgs</depend>
