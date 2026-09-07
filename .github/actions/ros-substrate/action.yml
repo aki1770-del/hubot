@@ -24,9 +24,75 @@
 name: ros-substrate
 description: Released nav2 from packages.ros.org, with hubot's dependencies resolved from its own package.xml.
 
+inputs:
+  # ⚑ ADDED 2026-09-07. The distribution was WRITTEN INTO THIS FILE in three
+  # places -- the tool list, both rosdep flags, and the version print -- so the
+  # action could only ever build one distribution. That is not a limitation of
+  # the package; it is a limitation of this file, and it is the reason the only
+  # answer to "does hubot build on jazzy?" was a sentence someone typed.
+  distro:
+    description: ROS 2 distribution (lyrical | kilted | jazzy). Drives the deb prefix AND --rosdistro.
+    required: true
+
+  # ⚑ ASSERTED, NOT DERIVED, AND DELIBERATELY SO.
+  # Deriving the codename here would put the distro->Ubuntu mapping in a SECOND
+  # place, next to the one in .github/supported_distros.yml, which is exactly
+  # the drift this action was created to end. The caller passes the pair it read
+  # from that file and this step proves the pair is real against /etc/os-release.
+  # Get it wrong and you get one sentence naming both halves -- not forty lines
+  # of "Unable to locate package ros-lyrical-*" on a noble base, which is what a
+  # mis-paired matrix entry looks like without this check.
+  ubuntu:
+    description: Ubuntu codename the container is expected to be (resolute | noble). Asserted, not trusted.
+    required: true
+
+  # ⚑ ADDED 2026-09-07 TO KILL A CLASS, NOT AN INSTANCE.
+  # `rosdep` and `colcon` both stop crawling at the first package.xml on a path.
+  # This repository's ROOT is a package, so hubot_live_stack/ -- nested inside
+  # it -- is invisible to `--from-paths $GITHUB_WORKSPACE`, and the live-stack
+  # job made a SECOND rosdep call of its own to pick it up.
+  #
+  # That second call ran AFTER this action's `rm -rf /var/lib/apt/lists/*`, and
+  # died on the runner in 0.33 s with:
+  #
+  #     E: Unable to locate package ros-lyrical-behaviortree-cpp
+  #     ERROR: the following rosdeps failed to install
+  #
+  # which reads as a bad dependency key and is not one. The package is served,
+  # the manifest was right, and apt says the same sentence for "not published"
+  # and "I have no lists". The instance-fix was an `apt-get update` in the
+  # caller. The CLASS-fix is this input: every path is resolved in ONE call,
+  # inside this file, before the teardown -- so there is no later resolution
+  # site to break, and no second copy of the recipe to drift.
+  extra-paths:
+    description: >-
+      Extra source paths (space-separated, relative to $GITHUB_WORKSPACE) whose
+      package.xml must be resolved in the SAME rosdep call as the workspace.
+      Each one must exist; a typo fails here rather than resolving silently.
+    required: false
+    default: ''
+
 runs:
   using: composite
   steps:
+    - name: the container is the distribution it says it is
+      shell: bash
+      run: |
+        set -eu
+        . /etc/os-release
+        if [ "$VERSION_CODENAME" != "${{ inputs.ubuntu }}" ]; then
+          echo "SUBSTRATE MISMATCH." >&2
+          echo "  distro requested : ${{ inputs.distro }} (expects Ubuntu '${{ inputs.ubuntu }}')" >&2
+          echo "  container is     : $PRETTY_NAME ($VERSION_CODENAME)" >&2
+          echo "packages.ros.org serves each ROS distribution for exactly one Ubuntu" >&2
+          echo "codename. On the wrong base every ros-${{ inputs.distro }}-* package is" >&2
+          echo "simply absent, and apt reports that as 'Unable to locate package' --" >&2
+          echo "which reads as a bad dependency and is not one. Fix the pairing in" >&2
+          echo ".github/supported_distros.yml; do not add packages to work around this." >&2
+          exit 1
+        fi
+        echo "substrate OK: ${{ inputs.distro }} on $PRETTY_NAME ($VERSION_CODENAME)"
+
     - name: packages.ros.org + rosdep + the ros2 CLI
       shell: bash
       run: |
@@ -42,21 +108,50 @@ runs:
         # are named here, and they are named for BOTH jobs so the two substrates stay
         # byte-identical. procps is load-bearing: without it the launch gate's
         # contamination check would report CLEAN unconditionally, and it refuses to run.
+        D='${{ inputs.distro }}'
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
           build-essential cmake python3-colcon-common-extensions python3-rosdep \
           python3-yaml procps \
-          ros-lyrical-ros2launch ros-lyrical-ros2topic ros-lyrical-ros2param \
-          ros-lyrical-rmw-fastrtps-cpp
+          "ros-$D-ros2launch" "ros-$D-ros2topic" "ros-$D-ros2param" \
+          "ros-$D-rmw-fastrtps-cpp"
 
     - name: dependencies, resolved FROM package.xml (not from a list we maintain)
       shell: bash
       run: |
         set -eux
+        D='${{ inputs.distro }}'
+        # ⚑ EVERY SOURCE PATH IN ONE CALL. See the `extra-paths` input above for
+        # why this is not tidiness: a second resolution site is a second copy of
+        # the recipe, and it runs after the teardown below.
+        PATHS="$GITHUB_WORKSPACE"
+        for p in ${{ inputs.extra-paths }}; do
+          # A path that does not exist would make rosdep resolve a smaller set and
+          # still exit 0 -- a silent under-resolution that shows up later as a
+          # missing header. It fails here instead.
+          if [ ! -f "$GITHUB_WORKSPACE/$p/package.xml" ]; then
+            echo "extra-paths: '$p' has no package.xml under \$GITHUB_WORKSPACE." >&2
+            echo "rosdep would have skipped it and still exited 0. Refusing." >&2
+            exit 1
+          fi
+          PATHS="$PATHS $GITHUB_WORKSPACE/$p"
+        done
         rosdep init >/dev/null 2>&1 || true
-        rosdep update --rosdistro lyrical
-        rosdep install --from-paths "$GITHUB_WORKSPACE" --ignore-src \
-          --rosdistro lyrical -y
+        rosdep update --rosdistro "$D"
+        rosdep install --from-paths $PATHS --ignore-src --rosdistro "$D" -y
+        # ⚑ THE TEARDOWN STAYS, AND IT IS NOT HYGIENE -- IT IS THE FORCING FUNCTION.
+        # With the lists gone, any LATER attempt to resolve packages fails instead
+        # of quietly working, so a second resolution site cannot be added without
+        # someone noticing. That is the whole point. The cost is that apt's message
+        # is misleading, which is why `extra-paths` exists to remove the legitimate
+        # reason to resolve later, and why this breadcrumb exists for the rest.
         rm -rf /var/lib/apt/lists/*
+        cat > /opt/hubot-substrate-note.txt <<'NOTE'
+        The apt package lists were deleted on purpose by .github/actions/ros-substrate.
+        If a later step says "E: Unable to locate package ros-*", the package is almost
+        certainly PUBLISHED and the lists are simply absent. Do not add the package to
+        a list and do not run apt-get update here: pass the source path through the
+        action's `extra-paths` input so it is resolved in the one rosdep call.
+        NOTE
 
     # ⚑ WHAT WE ARE BUILDING AGAINST, RECORDED RATHER THAN ASSUMED.
     # packages.ros.org is a MOVING feed and the deb version is deliberately NOT pinned:
@@ -67,12 +162,13 @@ runs:
       shell: bash
       run: |
         set -eu
+        D='${{ inputs.distro }}'
         {
-          echo "### substrate"
+          echo "### substrate — $D"
           echo '```'
           . /etc/os-release; echo "os        : $PRETTY_NAME ($VERSION_CODENAME) $(dpkg --print-architecture)"
           for p in nav2-costmap-2d nav2-util nav2-ros-common nav2-msgs diagnostic-msgs; do
-            echo "$p: $(dpkg -s ros-lyrical-$p 2>/dev/null | awk -F': ' '/^Version/{print $2}')"
+            echo "$p: $(dpkg -s ros-$D-$p 2>/dev/null | awk -F': ' '/^Version/{print $2}')"
           done
           echo '```'
         } >> "$GITHUB_STEP_SUMMARY"

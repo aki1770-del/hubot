@@ -26,6 +26,21 @@ published packages, not inferred from headers: `find_package` fails at `CMakeLis
 **`nav2_ros_common` does not exist before nav2 1.5.0**, and no `ros-jazzy-nav2-ros-common` or
 `ros-kilted-nav2-ros-common` is published at all.
 
+<!-- BEGIN GENERATED distro-floor — edit .github/supported_distros.yml, then run scripts/distro_floor.py --render -->
+
+<!-- Generated. Every row is proved on every run by the `distro floor` CI job,
+     in both directions: a `no` that starts building reddens the job too. -->
+
+| ROS 2 | Ubuntu | nav2 | builds today |
+|---|---|---|---|
+| `lyrical` | resolute | `1.5.1` | **yes** |
+| `kilted` | noble | `1.4.2` | no — missing `nav2_ros_common` |
+| `jazzy` | noble | `1.3.12` | no — missing `nav2_ros_common` |
+
+Measured against the live package feed, not inferred from headers.
+
+<!-- END GENERATED distro-floor -->
+
 A version shim would not be enough, and the reason is worth stating rather than leaving you to
 discover it: **`CostmapFilter::process()` is a pure virtual whose signature changed at 1.5.0** —
 `geometry_msgs::msg::Pose2D` before it, `geometry_msgs::msg::Pose` after. One `process()` cannot
