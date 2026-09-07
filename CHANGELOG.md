@@ -4,7 +4,41 @@ All notable changes to `hubot`. Format follows Keep a Changelog; versions follow
 
 ## [Unreleased]
 
-*Nothing yet.*
+### Added
+- ⚑ **`hubot_live_stack/` — the harness this package's largest liveness claim already cited,
+  now actually in the repository.** `doc/SOTIF_PERFORMANCE_INSUFFICIENCY.md` discharged the
+  real-stack row by pointing at `hubot_live_stack/`. That directory existed on one machine,
+  in one working tree, and **was not in this repository** — so every reader who followed the
+  citation reached nothing. It is here now: five OS processes, a real `Costmap2DROS` driven by
+  its own `map_update_thread_`, nav2's own `controller_server`, the parameter target in a
+  separate process, and a genuine `ClearEntireCostmap` through nav2's own BehaviorTree node.
+- **`gate.yml` job `live-stack`** builds and RUNS the harness's three conditions on released
+  nav2 on every push. The two existing jobs are untouched and their resolved dependency set is
+  unchanged (measured: the same 17 rosdep keys with the new directory present as without it).
+
+### Fixed
+- ⚑ **The harness could not have run on released nav2 at all, and nothing said so.**
+  `config/live_stack.yaml` names `RegulatedPurePursuitController` as the FollowPath
+  controller; nothing declared the package that provides it. On the source-built image the
+  harness was first exercised on, it was present by accident. On released nav2 1.5.1
+  `controller_server` dies at configure — `configure rc=0, activate rc=1` — with
+  *"the class …::RegulatedPurePursuitController … does not exist"*. Declared now, and the
+  same three conditions return `rc=0` throughout on the released substrate, with
+  `map_update_thread_` measured from the costmap's own DEBUG log at 5.000 Hz (n=92/18.2 s).
+- **`hubot_live_stack/package.xml` did not declare `rcl_interfaces`**, which
+  `CMakeLists.txt:23` requires and every one of its four executables links. It built anyway,
+  because `rclcpp` pulls it transitively — a manifest that was wrong in a way no build could
+  show. It also declared `nav2_lifecycle_manager`, which nothing in the package uses, and did
+  not declare the `ros2` CLI verb packages its own shipped script invokes.
+
+### Notes for integrators
+- ⚑ **`hubot_live_stack` is INVISIBLE to a plain `colcon build`.** This repository's root is
+  itself a package, and colcon's crawl stops at the first `package.xml` on a path. Worse than
+  invisible: `colcon build --packages-select hubot_live_stack` prints a warning, builds
+  nothing, and **exits 0**. `rosdep install --from-paths src/hubot` likewise resolves 17 keys
+  and never sees the harness's four extra ones. Give both tools both paths — or run
+  `hubot_live_stack/scripts/build_gate.sh`, which does that and then asserts the install space
+  instead of trusting the exit code. **None of this changes how `hubot` itself is built.**
 
 ## [0.1.1] - 2026-09-07
 

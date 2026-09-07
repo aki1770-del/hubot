@@ -1,0 +1,81 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>hubot_live_stack</name>
+  <version>0.1.0</version>
+  <description>
+    Live-stack harness for the hubot ZoneParameterFilter. Stands up the four
+    things every existing hubot test simulates: a real Costmap2DROS driving the
+    filter from its OWN map_update_thread_, the real nav2 controller_server
+    creating that costmap node the production way, the parameter target in a
+    SEPARATE OS PROCESS, and a genuine ClearEntireCostmap arriving through a real
+    BehaviorTree.CPP recovery node. Substrate only: this package asserts nothing
+    about enforced/watching semantics. Those assertions are FSE's and are added
+    on top of what runs here.
+  </description>
+  <maintainer email="aki1770@gmail.com">Sakichi Principle Actuator unit</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>nav2_ros_common</depend>
+  <depend>nav2_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+  <!-- ⚑ WAS MISSING. `find_package(rcl_interfaces REQUIRED)` at CMakeLists.txt:23 and
+       `${rcl_interfaces_TARGETS}` in `common_deps`, which every one of the four
+       executables links. It built anyway because `rclcpp`'s deb pulls it in, so the
+       manifest was wrong in a way no build here could show, which is exactly the class this
+       package documents. `hubot/package.xml` declares it; this file, written later by
+       the same seat, did not. -->
+  <depend>rcl_interfaces</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>behaviortree_cpp</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>pluginlib</depend>
+  <depend>nav2_costmap_2d</depend>
+  <exec_depend>nav2_behavior_tree</exec_depend>
+
+  <exec_depend>hubot</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <!-- ⚑ WAS MISSING, AND IT IS WHY THIS HARNESS COULD NOT RUN ON RELEASED nav2 AT ALL.
+       `config/live_stack.yaml:48` names
+       `nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController` as the
+       FollowPath controller. Nothing declared the package that provides it. On the
+       image this harness was first exercised on, every nav2 package was built from
+       source and it was present by accident. On released nav2 1.5.1 it is a separate
+       deb, and without it `controller_server` dies at configure:
+         [FATAL] Failed to create controller. Exception: ... the class
+         nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController with
+         base class type nav2_core::Controller does not exist. Declared types are
+       Measured 2026-09-07 on ubuntu 26.04 resolute + released nav2 1.5.1: configure
+       rc=0, activate rc=1, and the costmap and the filter had both already come up. -->
+  <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
+
+  <!-- ⚑ THE SHIPPED SCRIPT IS THE ENTRY POINT, SO WHAT IT INVOKES IS A RUNTIME
+       DEPENDENCY, NOT A DEVELOPER TOOL. `scripts/run_live_stack.sh` is installed into
+       `share/hubot_live_stack/scripts/` and is how this package is meant to be used; it
+       calls `ros2 pkg` (:53), `ros2 run` (:105,111,114,120,140), `ros2 lifecycle`
+       (:128,132), `ros2 node` (:152,163), `ros2 service` (:155,166) and `ros2 param`
+       (:158). Same reasoning as `hubot`'s own `<exec_depend>launch</exec_depend>` for
+       its shipped launch file. Each key below was resolved against the lyrical rosdep
+       database before it was written here, not recalled.
+       ⚑ `nav2_lifecycle_manager` WAS DECLARED HERE AND IS REMOVED: nothing in this
+       package invokes it. The transitions are driven by `ros2 lifecycle set`, and the
+       only other occurrence of the name is a comment at run_live_stack.sh:124. -->
+  <exec_depend>ros2run</exec_depend>
+  <exec_depend>ros2pkg</exec_depend>
+  <exec_depend>ros2lifecycle</exec_depend>
+  <exec_depend>ros2node</exec_depend>
+  <exec_depend>ros2service</exec_depend>
+  <exec_depend>ros2param</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

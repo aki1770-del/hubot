@@ -1,0 +1,32 @@
+# OVERLAY — the target node named RELATIVELY. Reproduces the namespace miss.
+#
+# Apply AFTER config/live_stack.yaml:
+#   --params-file live_stack.yaml --params-file overlay_target_relative_name.yaml
+#
+# ⚑ WHAT THIS CONDITION IS. rclcpp::AsyncParametersClient
+# (zone_parameter_filter.cpp:387) resolves the target node name relative to the
+# OWNING node. In production the owning node is always namespaced -- nav2 makes
+# it `/local_costmap/local_costmap` under controller_server and
+# `/global_costmap/global_costmap` under planner_server. So a bare
+# `zpf_target_node` here produces a client for
+#     /local_costmap/zpf_target_node/set_parameters
+# against a target that actually lives at /zpf_target_node.
+#
+# Measured on this harness 2026-09-06:
+#   `ros2 service list`              -> only /zpf_target_node/set_parameters exists
+#   `ros2 node info /local_costmap/local_costmap`
+#                                    -> client on /local_costmap/zpf_target_node/set_parameters
+#   target process log               -> nothing arrives
+#   an EXTERNAL `ros2 param set /zpf_target_node writable_speed 0.9`
+#                                    -> succeeds, so the target is reachable
+#
+# BDE stands this condition up and names it. What it MEANS for the filter's
+# enforced/watching semantics -- and whether reporting it only at the deadline
+# is adequate -- is FSE's to assess, not this seat's.
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      zone_parameter_filter:
+        danger_zone:
+          ro_speed:
+            node: "zpf_target_node"

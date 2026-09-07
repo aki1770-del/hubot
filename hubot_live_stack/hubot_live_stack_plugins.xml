@@ -1,0 +1,13 @@
+<library path="hubot_live_stack_layers">
+  <class name="hubot_live_stack::FullWindowBoundsLayer"
+         type="hubot_live_stack::FullWindowBoundsLayer"
+         base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Declares the full rolling window as the costmap update bounds and writes
+      no costs. Required because CostmapFilter::updateBounds() ignores the
+      bounds arguments, so with no bounds-declaring plugin LayeredCostmap's
+      `if (xn >= x0 &amp;&amp; yn >= y0)` guard is never satisfied and no filter
+      is ever driven.
+    </description>
+  </class>
+</library>

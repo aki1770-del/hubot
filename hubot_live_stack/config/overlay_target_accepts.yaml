@@ -1,0 +1,20 @@
+# OVERLAY — the target ACCEPTS the set.
+#
+# Apply AFTER config/live_stack.yaml:
+#   --params-file live_stack.yaml --params-file overlay_target_accepts.yaml
+#
+# The base config points at `readonly_speed`, which rclcpp refuses before any
+# user callback runs -- so the target process logs nothing and a genuine refusal
+# looks identical to a set that never arrived. This overlay points at the
+# WRITABLE parameter instead, so the set reaches zpf_target_node's own callback
+# and appears in ITS log: positive proof that a real cross-process
+# set_parameters round trip completed.
+#
+# This is the POSITIVE CONTROL. Without it, "enforced: NO" cannot be attributed.
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      zone_parameter_filter:
+        danger_zone:
+          ro_speed:
+            parameter: "writable_speed"
