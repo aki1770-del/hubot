@@ -60,8 +60,7 @@
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
-#include "nav2_ros_common/lifecycle_node.hpp"
-#include "nav2_ros_common/tf2_factories.hpp"
+#include "hubot/nav2_compat.hpp"
 #include "geometry_msgs/msg/pose.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "std_msgs/msg/u_int8.hpp"
@@ -261,14 +260,14 @@ protected:
     opts.parameter_overrides(cfg);
 
     // ⚑ THE ONE LINE THIS WHOLE FILE EXISTS FOR.
-    node_ = std::make_shared<nav2::LifecycleNode>("zpf_test_host", kHostNamespace, opts);
+    node_ = std::make_shared<hubot::HostNode>("zpf_test_host", kHostNamespace, opts);
     node_executor_.add_node(node_->get_node_base_interface());
 
     decision_sub_ = std::make_shared<DecisionSubscriber>();
     decision_executor_.add_node(decision_sub_);
 
     layers_ = std::make_shared<nav2_costmap_2d::LayeredCostmap>("map", false, false);
-    tf_buffer_ = nav2::create_transform_buffer(node_);
+    tf_buffer_ = hubot::createTransformBuffer(node_);
     tf_buffer_->setUsingDedicatedThread(true);
 
     filter_ = std::make_shared<InspectableZpf>();
@@ -307,10 +306,9 @@ protected:
     auto start = std::chrono::steady_clock::now();
     do {
       nav2_costmap_2d::Costmap2D costmap(4, 4, 1.0, 0.0, 0.0, 0);
-      geometry_msgs::msg::Pose pose;
-      pose.position.x = 1.5;
-      pose.position.y = 1.5;
-      pose.orientation.w = 1.0;
+      // See degrade_at_production_caller_test.cpp: the pose type `process()`
+      // takes differs by nav2 line, so the test names neither of them.
+      const hubot::FilterPose pose = hubot::makeFilterPose(1.5, 1.5);
       filter_->process(costmap, 0, 0, 4, 4, pose);
       spinFor(50ms);
     } while (std::chrono::steady_clock::now() - start < duration);
@@ -321,10 +319,10 @@ protected:
   rclcpp::executors::SingleThreadedExecutor target_executor_;
   rclcpp::executors::SingleThreadedExecutor decision_executor_;
 
-  nav2::LifecycleNode::SharedPtr node_;
+  std::shared_ptr<hubot::HostNode> node_;
   std::shared_ptr<InspectableZpf> filter_;
   std::shared_ptr<nav2_costmap_2d::LayeredCostmap> layers_;
-  nav2::TransformBuffer::SharedPtr tf_buffer_;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<InfoPublisher> info_pub_;
   std::shared_ptr<MaskPublisher> mask_pub_;
   std::shared_ptr<DecisionSubscriber> decision_sub_;

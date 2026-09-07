@@ -601,9 +601,32 @@ def run_checks(root):
 
 
 # ---------------------------------------------------------------- negative controls
+def _chk1_mutate(text):
+    """Break exactly the number CHK-1 reads, found with CHK-1's own pattern.
+
+    ⚑ THIS WAS A HARD-CODED `:105` AND IT WENT STALE THE DAY THE CODE MOVED.
+    The jazzy/kilted port moved the throw sites (105/270/339 -> 118/314/397). CHK-1's
+    README citations were repaired with it; THIS CONTROL'S LITERAL WAS NOT. So the
+    mutation replaced a string that no longer existed, the tree came back unchanged,
+    CHK-1 stayed green -- and the control reported STILL GREEN, i.e. it had stopped
+    proving anything while CHK-1 itself still passed. A check that cannot be made to
+    fail has measured nothing, and this one announced that about itself only because
+    the controls are run on every push. Measured 2026-09-07 on the runner; the local
+    check run had been green because running a check is not running its control.
+
+    Derived now, never literal: whatever three numbers CHK-1 reads, the first of them
+    is what gets broken. It cannot go stale again when the code moves.
+    """
+    pat = re.compile(r"(`src/zone_parameter_filter\.cpp:)(\d+)(`[^\n]*\n?[^\n]*?`:)"
+                     r"(\d+)(`[^\n]*\n?[^\n]*?`:)(\d+)(`)")
+    m = pat.search(text)
+    if not m:
+        return text          # CHK-1 itself reports the form is gone; that is not a pass
+    return text[:m.start(2)] + "999" + text[m.end(2):]
+
+
 MUTATIONS = [
-    ("CHK-1", RDM, lambda t: t.replace("`src/zone_parameter_filter.cpp:105`",
-                                       "`src/zone_parameter_filter.cpp:999`", 1)),
+    ("CHK-1", RDM, _chk1_mutate),
     ("CHK-2", PKG, lambda t: t.replace("<version>", "<version>9.", 1)),
     # ⚑ THE OTHER OPERAND. CHK-2 is a two-file agreement, so it needs a control on each
     # side; mutating only package.xml would leave a check that could be satisfied by a

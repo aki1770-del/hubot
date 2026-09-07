@@ -1,0 +1,78 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# THE DISTRO FLOOR — the ONE place it is written, and the place CI reads it.
+#
+# ⚑ WHY THIS FILE EXISTS AND WHY IT IS NOT A SENTENCE IN THE README.
+# Until 2026-09-07 the floor lived only in prose: "requires nav2 >= 1.5.0; on
+# jazzy and kilted it does not build." Nothing executed that claim. It could go
+# false in EITHER direction and every light would stay green:
+#
+#   * generously  -- someone widens the claim, or the port half-lands, and the
+#                    page promises a build that does not happen;
+#   * meanly      -- the port DOES land, and the page still tells a jazzy
+#                    developer to go away. She goes away, and nothing reds.
+#
+# The second one is the expensive one and it is invisible to every gate that
+# only checks the supported path. So the floor is declared HERE, machine-read,
+# and asserted in BOTH directions by the `distro floor` job:
+#
+#   status: supported   -> the package MUST configure, build and pass.
+#   status: unsupported -> the package MUST FAIL, and fail by MISSING EXACTLY THE
+#                          PACKAGES IN `expect_missing` and no others. If it
+#                          starts succeeding, the job goes RED and the claim has
+#                          to be corrected before anything can merge.
+#
+# `expect_missing` is not decoration, and it is not "it failed somewhere".
+# "It failed" is satisfied by a network outage, a mirror hiccup, a typo in the
+# workflow -- a gate that accepts any failure has measured nothing. The floor
+# job probes EVERY `find_package()` in CMakeLists.txt one at a time and requires
+# the failures to be exactly this set. That is what makes the claim actionable
+# for whoever ports the package: it says which door is locked, not that the
+# building is shut.
+#
+# ⚑ TO MOVE A DISTRO ACROSS THE FLOOR, EDIT ONE LINE: `status`. The matrix, the
+# assertion direction and the README cross-check all follow it.
+#
+# Measured 2026-09-07 against the live feed (http://packages.ros.org/ros2/ubuntu),
+# not inferred: `zcat dists/<codename>/main/binary-amd64/Packages.gz`.
+# ══════════════════════════════════════════════════════════════════════════════
+distros:
+  - name: lyrical
+    ubuntu: resolute            # Ubuntu 26.04 — the ONLY codename serving lyrical
+    base: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
+    nav2: 1.5.1
+    status: supported
+
+  # ⚑ FLIPPED 2026-09-07, THE SAME DAY THIS FILE WAS WRITTEN, AND THE FLIP IS THE
+  # POINT RATHER THAN AN EMBARRASSMENT. The header above predicted, in writing,
+  # that the expensive failure is "the port DOES land and the page still tells a
+  # jazzy developer to go away." Hours later the port landed. The `distro floor`
+  # job went red against a package that now builds -- which is the gate working,
+  # not breaking -- and this is the correction it forced. Nothing else in this
+  # repository would have said a word.
+  - name: kilted
+    ubuntu: noble               # Ubuntu 24.04
+    base: ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+    nav2: 1.4.2
+    status: supported
+    # ⚑ WAS `unsupported`, WITH `expect_missing: [nav2_ros_common]`.
+    # Measured in a clean room BEFORE the port, 2026-09-07: of the find_package()
+    # calls in CMakeLists.txt exactly one could not be satisfied here, and the
+    # package died at `CMake Error at CMakeLists.txt:21 (find_package)` in about
+    # 1.2 s. rosdep said the same thing one stage earlier:
+    #   ERROR: ... Cannot locate rosdep definition for [nav2_ros_common]
+    # After the port that dependency is QUIET, reached through
+    # include/hubot/nav2_compat.hpp, and the package builds and passes here.
+    #
+    # ⚑ THE PRE-PORT STATE IS STILL REACHABLE AS A NEGATIVE CONTROL, and it has
+    # to be: `unsupported` now has no live instance, and a branch nothing
+    # exercises rots until the day it is trusted.
+    #   outputs/bde_loom/multidistro_2026_09_07/run_floor_job.sh <clone> kilted origin/master
+
+  - name: jazzy
+    ubuntu: noble               # Ubuntu 24.04
+    base: ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+    nav2: 1.3.12
+    status: supported
+    # Same as kilted, measured separately on 1.3.12 rather than assumed from it —
+    # a floor claim carried across two distributions on one measurement is one
+    # measurement wearing two hats.

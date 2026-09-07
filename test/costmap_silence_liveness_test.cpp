@@ -46,8 +46,7 @@
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
-#include "nav2_ros_common/lifecycle_node.hpp"
-#include "nav2_ros_common/tf2_factories.hpp"
+#include "hubot/nav2_compat.hpp"
 #include "geometry_msgs/msg/pose.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "std_msgs/msg/u_int8.hpp"
@@ -246,11 +245,11 @@ protected:
     if (target_exists) {
       target_node_ = std::make_shared<TargetNode>();
     }
-    node_ = std::make_shared<nav2::LifecycleNode>("liveness_host", opts);
+    node_ = std::make_shared<hubot::HostNode>("liveness_host", "", opts);
     recorder_ = std::make_shared<DecisionRecorder>();
 
     layers_ = std::make_shared<nav2_costmap_2d::LayeredCostmap>("map", false, false);
-    tf_buffer_ = nav2::create_transform_buffer(node_);
+    tf_buffer_ = hubot::createTransformBuffer(node_);
     tf_buffer_->setUsingDedicatedThread(true);
 
     filter_ = std::make_shared<hubot::ZoneParameterFilter>();
@@ -320,7 +319,7 @@ protected:
     std::this_thread::sleep_for(duration);
   }
 
-  std::shared_ptr<nav2::LifecycleNode> node_;
+  std::shared_ptr<hubot::HostNode> node_;
   std::shared_ptr<TargetNode> target_node_;
   std::shared_ptr<DecisionRecorder> recorder_;
   std::shared_ptr<nav2_costmap_2d::LayeredCostmap> layers_;

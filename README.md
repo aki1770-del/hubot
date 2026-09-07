@@ -18,20 +18,76 @@ does **not** mention, because the disclosure was written after the tag was cut. 
 contains no CI workflow at all, so no gate has ever run on it. `0.1.1` is the first release this
 project's gate has passed.
 
-⚑ **Which ROS 2 distribution — read this before you clone.** This package requires **nav2 >= 1.5.0**,
-which today means **`lyrical` on Ubuntu 26.04 (`resolute`)**. On **`jazzy`** (nav2 `1.3.12`) and
-**`kilted`** (nav2 `1.4.2`) it **does not build** — and it fails at *configure*, in about a second,
-rather than part-way through a compile. Measured 2026-09-07 against both distributions' real
-published packages, not inferred from headers: `find_package` fails at `CMakeLists.txt:21` because
-**`nav2_ros_common` does not exist before nav2 1.5.0**, and no `ros-jazzy-nav2-ros-common` or
-`ros-kilted-nav2-ros-common` is published at all.
+⚑ **Which ROS 2 distribution.** **`jazzy`, `kilted` and `lyrical` all build and pass**, each against
+its own distribution's real published `nav2` — `1.3.12`, `1.4.2` and `1.5.1` respectively. The table
+below is generated from `.github/supported_distros.yml`, and CI proves every row of it on every run.
 
-A version shim would not be enough, and the reason is worth stating rather than leaving you to
-discover it: **`CostmapFilter::process()` is a pure virtual whose signature changed at 1.5.0** —
-`geometry_msgs::msg::Pose2D` before it, `geometry_msgs::msg::Pose` after. One `process()` cannot
-override both, so on an older nav2 this class is **abstract** and pluginlib cannot instantiate it
-even if every other difference were papered over. If you are on `jazzy` or `kilted`, this package
-has nothing for you today, and we would rather you learn that here than from a build log.
+⚑ **This paragraph said the opposite until 2026-09-07, and the correction is the point.** It read:
+*"On `jazzy` and `kilted` it does not build … if you are on `jazzy` or `kilted`, this package has
+nothing for you today."* That was true, measured, and published — and then it was treated as a
+permanent property of the world rather than a problem to solve. It was neither.
+
+**What the wall actually was:** one dependency, `nav2_ros_common`, which does not exist before nav2
+1.5.0 — and four of the things this package used it for turned out to be **three type aliases and a
+three-line QoS preset**. `rclcpp_lifecycle::LifecycleNode::create_publisher` and
+`::create_subscription` are byte-identical across all three distributions. The pose type in
+`CostmapFilter::process()`, which does differ across the 1.5.0 boundary, is **deduced from the base
+class's own declaration**, so it needed no version switch at all. Two genuine differences remain and
+are handled where they occur: `Layer::joinWithParentNamespace()` (absent on jazzy) and
+`CostmapFilter::worldToMask()` (removed at 1.5.x in favour of `nav2_util::worldToMap()`).
+
+**If you pinned `0.1.0` or `0.1.1`, neither carries this.** Both are `lyrical`-only.
+
+<!-- BEGIN GENERATED distro-floor — edit .github/supported_distros.yml, then run scripts/distro_floor.py --render -->
+
+<!-- Generated. Every row is proved on every run by the `distro floor` CI job,
+     in both directions: a `no` that starts building reddens the job too. -->
+
+| ROS 2 | Ubuntu | nav2 | builds today |
+|---|---|---|---|
+| `lyrical` | resolute | `1.5.1` | **yes** |
+| `kilted` | noble | `1.4.2` | **yes** |
+| `jazzy` | noble | `1.3.12` | **yes** |
+
+Measured against the live package feed, not inferred from headers.
+
+<!-- END GENERATED distro-floor -->
+
+⚑ **This page also argued, until 2026-09-07, that no shim could work.** It said
+`CostmapFilter::process()` is a pure virtual whose signature changed at 1.5.0 — `Pose2D` before,
+`Pose` after — that one `process()` cannot override both, and that the class is therefore *abstract*
+on an older nav2 and unloadable whatever else was done.
+
+**The premise was right and the conclusion was wrong.** The signature does change. But this package
+never has to name the pose type: it is **deduced from the base class's own declaration of the
+function being overridden**, so the two statements of the fact cannot disagree. There is no version
+switch on `process()` in this repository, because none is needed. *(It matters concretely as well —
+`geometry_msgs` on `lyrical` no longer ships `pose2_d.hpp`, so code naming that type would not
+compile there at all.)*
+
+Kept rather than deleted, because the argument was published and a reader may have believed it.
+
+⚑ **Which processor — and this page has never said, which is the point.** Every figure above was
+produced on **amd64**. A head unit or a robot is **arm64**, and until 2026-09-07 the words `arm64`,
+`aarch64`, `amd64` and `x86_64` appeared **zero times** anywhere in this repository's documentation —
+inside a bounds list that otherwise names its limits carefully, where silence reads as coverage.
+
+**What is now measured on arm64:** the suite, in a released-nav2 `resolute` clean room built from the
+arm64 half of the very image digest CI pins — **52 tests, 0 errors, 0 failures, 2 skipped**, identical
+to amd64, from a genuine AArch64 build (`ELF64`, `Machine: AArch64`, zero undefined symbols). The
+released nav2 header this package compiles against is **byte-identical** between the two
+architectures, so the compile-time interface does not vary by processor.
+
+⚑ **What is NOT measured on arm64, and it is the part that matters most:** the multi-process
+bring-up. Every one of those 52 tests runs **in a single process**. The live stack — five processes
+that must find each other, which is what a real target actually does — **has never run on arm64 at
+all.** It could not be run here: the emulator this host uses does not implement one socket option
+(`IP_MULTICAST_IF`) that ROS 2 discovery requires, so no two processes ever see each other. That is a
+limitation of the emulator, **not a defect found in this package and not a clean bill of health
+either** — it is simply unmeasured, and it stays unmeasured until this runs on real arm64 silicon.
+And the arm64 result above is **emulated**, not native: the kernel is the host's, the memory model is
+x86's rather than ARM's weaker one, and a missing barrier would pass here and could still fail on real
+hardware.
 
 **Three more bounds, before the pitch rather than after it:**
 
@@ -170,10 +226,12 @@ that number; it never needed to **obtain** it from nav2's header. It is now
 `static_assert`s guard it: one fires on **any** nav2 if upstream renumbers its filters, one fires
 wherever nav2 carries the constant and disagrees with ours. **Measured**: the full nav2
 dependency chain built from tag `1.5.1`; this package built and installed against it; the plugin
-resolved and ran through a live `LayeredCostmap` there. **Building is not passing**: 23 of 26
-tests pass on that release — the three that do not are one pre-existing case identical on
-branch, and two whose *upstream-comparison* arm needs a plugin that exists only on branch.
-`1.5.0` was not built and is not claimed.
+resolved and ran through a live `LayeredCostmap` there. **Measured on every supported
+distribution: 52 tests, 0 errors, 0 failures, 2 skipped.** The two skips are the
+*upstream-comparison* cases, which need a plugin no released nav2 ships; they run and pass on a
+nav2 that carries it. `1.5.0` was not built and is not claimed.
+*(⚑ This paragraph read "23 of 26 tests pass" until 2026-09-07, long after the suite had grown to
+52. A stale count understates the package, which is exactly why nobody notices it.)*
 
 **Do not take our word for it — check your own installation:**
 
@@ -444,8 +502,8 @@ keeps ticking. On that path nothing is swallowed and nothing takes the node down
 
 ⚑ **Scoped 2026-09-06; it used to be unqualified.** Three
 `throw std::runtime_error{"Failed to lock node"}` remain, at
-`src/zone_parameter_filter.cpp:105` (`initializeFilter`), `:270` (`filterInfoCallback`) and
-`:339` (`loadStateConfig`). None is on the `process()` / `updateCosts()` path that this
+`src/zone_parameter_filter.cpp:118` (`initializeFilter`), `:314` (`filterInfoCallback`) and
+`:397` (`loadStateConfig`). None is on the `process()` / `updateCosts()` path that this
 package is about, and the upstream filter carries the same three — but nothing above them
 handles an exception either, so "nothing takes the node down" was more than we had shown.
 
@@ -558,11 +616,10 @@ were refuted by that build. It is replaced by `hubot::kZoneParameterFilterType`,
 guarded on every nav2. The record of what it was — the compiler transcript, the check, what
 changed — is in the section near the top of this page and in the changelog, not repeated here.
 
-**What is and is not verified on that release.** The library and every test binary build; 23 of
-26 tests pass; the plugin resolves and runs through a live `LayeredCostmap`. The three that fail
-are one pre-existing case identical on branch, and two whose *upstream-comparison* control loads
-a plugin that exists only on branch. `1.5.0` is not built and not claimed. `rmw_fastrtps_cpp`
-only.
+**What is and is not verified on that release.** The library and every test binary build;
+**52 tests, 0 errors, 0 failures, 2 skipped**; the plugin resolves and runs through a live
+`LayeredCostmap`. The two skips are the *upstream-comparison* cases, which load a plugin no
+released nav2 ships. `1.5.0` is not built and not claimed. `rmw_fastrtps_cpp` only.
 
 ⚑ **A version number will not tell you which nav2 you have.** Tag `1.5.1` (`a6354f3f`) and
 `lyrical` HEAD (`6f23b11c`) both declare `<version>1.5.1</version>`. It no longer decides whether

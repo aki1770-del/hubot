@@ -31,9 +31,15 @@
 #include "std_msgs/msg/u_int8.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 
+#include "rclcpp_lifecycle/lifecycle_node.hpp"
+
 #include "nav2_costmap_2d/costmap_filters/costmap_filter.hpp"
 #include "nav2_costmap_2d/costmap_filters/filter_values.hpp"
 #include "nav2_msgs/msg/costmap_filter_info.hpp"
+
+// ⚑ EVERY nav2-version difference this package has lives in this one header,
+// and nothing below this line knows which distro it is being built on.
+#include "hubot/nav2_compat.hpp"
 
 namespace hubot
 {
@@ -110,7 +116,7 @@ public:
   void process(
     nav2_costmap_2d::Costmap2D & master_grid,
     int min_i, int min_j, int max_i, int max_j,
-    const geometry_msgs::msg::Pose & pose) override;
+    const hubot::FilterPose & pose) override;
 
   /**
    * @brief Reset filter — drop subscriptions, reset publisher, and ACTUALLY
@@ -306,9 +312,39 @@ protected:
   /// to refuse.
   double secondsSinceLastProcess() const;
 
-  nav2::Subscription<nav2_msgs::msg::CostmapFilterInfo>::SharedPtr filter_info_sub_;
-  nav2::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr mask_sub_;
-  nav2::Publisher<std_msgs::msg::UInt8>::SharedPtr state_event_pub_;
+  /// Join a relative name to the parent namespace of the costmap node.
+  ///
+  /// ⚑ `Layer::joinWithParentNamespace()` is public on kilted (layer.hpp:180)
+  /// and lyrical (:179) and DOES NOT EXIST in jazzy's nav2 at all -- grepped
+  /// across /opt/ros/jazzy/include on 2026-09-07, zero hits. It is called where
+  /// it exists and reproduced from upstream's own tag-1.4.2 body where it does
+  /// not; nav2_compat.hpp (3b) holds the dispatch and the reasoning, and
+  /// namespaced_target_resolution_test.cpp is the oracle on every distro.
+  std::string joinParentNamespace(
+    const rclcpp_lifecycle::LifecycleNode::SharedPtr & node, const std::string & topic);
+
+  /// World coordinates -> mask cell index, on whichever nav2 this is.
+  ///
+  /// ⚑ The one place upstream moved a function OUT of the base class rather
+  /// than into it. Through nav2 1.4.2 this is the protected member
+  /// `CostmapFilter::worldToMask()` (costmap_filter.hpp:197 on jazzy, :198 on
+  /// kilted); at 1.5.x that member is gone and the identical body is the free
+  /// `nav2_util::worldToMap()` (nav2_util/occ_grid_utils.hpp:56). Same
+  /// signature, same doc comment, same arithmetic -- verified side by side
+  /// 2026-09-07 -- but one is reachable only from a derived class and the
+  /// other only by including a header that does not exist on the older lines.
+  /// So it is a member here, and the fork is four lines in the .cpp.
+  bool maskWorldToMap(
+    nav_msgs::msg::OccupancyGrid::ConstSharedPtr mask,
+    double wx, double wy, unsigned int & mx, unsigned int & my) const;
+
+  // ⚑ SPELLED IN rclcpp, NOT nav2. `nav2::Subscription<T>` and `nav2::Publisher<T>`
+  // are type ALIASES for exactly these two -- nav2_ros_common/subscription.hpp:30
+  // and publisher.hpp:29, read 2026-09-07 -- so this is the same type under the
+  // name that exists on every distro instead of the name that exists on one.
+  rclcpp::Subscription<nav2_msgs::msg::CostmapFilterInfo>::SharedPtr filter_info_sub_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr mask_sub_;
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::UInt8>::SharedPtr state_event_pub_;
 
   nav_msgs::msg::OccupancyGrid::ConstSharedPtr filter_mask_;
   std::string global_frame_;

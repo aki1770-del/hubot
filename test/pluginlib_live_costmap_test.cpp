@@ -78,8 +78,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "pluginlib/class_loader.hpp"
 #include "pluginlib/exceptions.hpp"
-#include "nav2_ros_common/lifecycle_node.hpp"
-#include "nav2_ros_common/tf2_factories.hpp"
+#include "hubot/nav2_compat.hpp"
 #include "geometry_msgs/msg/pose.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "rcl_interfaces/msg/parameter_descriptor.hpp"
@@ -297,12 +296,17 @@ protected:
   {
     rclcpp::NodeOptions opts;
     opts.parameter_overrides(rejectingConfig());
-    node_ = std::make_shared<nav2::LifecycleNode>("zpf_pluginlib_host", opts);
+    // ⚑ THREE ARGUMENTS: (name, namespace, options). The two-argument form
+    // exists only on nav2 >= 1.5.0 (nav2_ros_common/lifecycle_node.hpp:87-90);
+    // nav2_util::LifecycleNode on jazzy and kilted declares only
+    // (name, ns = "", options = {}) (lifecycle_node.hpp:47-50), so an empty
+    // namespace has to be passed rather than defaulted.
+    node_ = std::make_shared<hubot::HostNode>("zpf_pluginlib_host", "", opts);
     node_executor_.add_node(node_->get_node_base_interface());
 
     layers_ = std::make_shared<nav2_costmap_2d::LayeredCostmap>("map", false, false);
     layers_->resizeMap(4, 4, 1.0, 0.0, 0.0);
-    tf_buffer_ = nav2::create_transform_buffer(node_);
+    tf_buffer_ = hubot::createTransformBuffer(node_);
     tf_buffer_->setUsingDedicatedThread(true);
 
     // (1) THE LOADER -- same construction as costmap_2d_ros.hpp:387.
@@ -387,9 +391,9 @@ protected:
     "nav2_costmap_2d", "nav2_costmap_2d::Layer"};
   std::shared_ptr<TargetNode> target_node_;
   std::shared_ptr<DecisionSubscriber> decision_sub_;
-  nav2::LifecycleNode::SharedPtr node_;
+  std::shared_ptr<hubot::HostNode> node_;
   std::shared_ptr<nav2_costmap_2d::LayeredCostmap> layers_;
-  nav2::TransformBuffer::SharedPtr tf_buffer_;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<nav2_costmap_2d::Layer> filter_;
   std::shared_ptr<nav2_costmap_2d::Layer> bounds_;
   std::shared_ptr<InfoPublisher> info_pub_;
