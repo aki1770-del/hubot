@@ -46,6 +46,46 @@ inputs:
     description: Ubuntu codename the container is expected to be (resolute | noble). Asserted, not trusted.
     required: true
 
+  # ⚑ ADDED 2026-09-08, AND ASSERTED FOR THE SAME REASON `ubuntu` IS.
+  # `runs-on` is a REQUEST. The container image below is a multi-arch index, so it
+  # resolves to whatever the runner turned out to be and comes up green either way
+  # -- which means a matrix line that says `arm64` would still pass on an amd64
+  # runner if the label were ever wrong, retired, or silently substituted. The job
+  # would publish an arm64 result it did not have, and nothing would say a word.
+  # That is the same shape as a mis-paired distro row: one sentence naming both
+  # halves is cheaper than a coverage claim nobody can falsify.
+  arch:
+    description: >-
+      dpkg architecture the runner is expected to be (amd64 | arm64). Asserted
+      against the container, never trusted from the `runs-on` label.
+    required: false
+    default: amd64
+
+  # ⚑ ADDED 2026-09-08. THE MIDDLEWARE WAS WRITTEN INTO THIS FILE AS A CONSTANT.
+  # The line below used to read `"ros-$D-rmw-fastrtps-cpp"`, and that single word
+  # was the whole of this package's answer to "which DDS?". Every green this
+  # repository has ever produced -- suite, bring-up, live stack, on every
+  # distribution -- was produced on Fast DDS, and nothing anywhere said so.
+  #
+  # That is the `expect_missing` failure shape one layer down: a claim that can
+  # only ever be measured in one direction. A costmap plugin does not name a
+  # middleware, so the package is *expected* to be transport-agnostic -- and an
+  # expectation no job can falsify is not a property, it is a hope. ROS 2 ships
+  # `rmw_cyclonedds_cpp` for every distribution this package supports, on both
+  # architectures (measured 2026-09-08 against packages.ros.org, all six cells).
+  #
+  # The name is given ONCE, here, and everything else is DERIVED from it: the deb
+  # is `ros-<distro>-rmw-<rmw>-cpp` and the selector is `rmw_<rmw>_cpp`. A job
+  # never spells either, so a job cannot install one middleware and select another
+  # -- which is the specific way this axis would go quietly green while measuring
+  # the default.
+  rmw:
+    description: >-
+      DDS implementation to install AND select (fastrtps | cyclonedds). Both the
+      package name and RMW_IMPLEMENTATION are derived from this one word.
+    required: false
+    default: fastrtps
+
   # ⚑ ADDED 2026-09-07 TO KILL A CLASS, NOT AN INSTANCE.
   # `rosdep` and `colcon` both stop crawling at the first package.xml on a path.
   # This repository's ROOT is a package, so hubot_live_stack/ -- nested inside
@@ -91,7 +131,18 @@ runs:
           echo ".github/supported_distros.yml; do not add packages to work around this." >&2
           exit 1
         fi
-        echo "substrate OK: ${{ inputs.distro }} on $PRETTY_NAME ($VERSION_CODENAME)"
+        HAVE=$(dpkg --print-architecture)
+        if [ "$HAVE" != "${{ inputs.arch }}" ]; then
+          echo "ARCHITECTURE MISMATCH." >&2
+          echo "  matrix line asked for : ${{ inputs.arch }}" >&2
+          echo "  this runner really is : $HAVE ($(uname -m))" >&2
+          echo "The container image is a multi-arch index and resolves to whatever" >&2
+          echo "the runner is, so this job would otherwise have gone GREEN and been" >&2
+          echo "reported as ${{ inputs.arch }} coverage it never had. Check the" >&2
+          echo "\`runs-on\` label for this matrix line." >&2
+          exit 1
+        fi
+        echo "substrate OK: ${{ inputs.distro }} on $PRETTY_NAME ($VERSION_CODENAME) $HAVE ($(uname -m))"
 
     - name: packages.ros.org + rosdep + the ros2 CLI
       shell: bash
@@ -109,11 +160,14 @@ runs:
         # byte-identical. procps is load-bearing: without it the launch gate's
         # contamination check would report CLEAN unconditionally, and it refuses to run.
         D='${{ inputs.distro }}'
+        # ⚑ THE MIDDLEWARE DEB IS DERIVED FROM THE `rmw` INPUT, NEVER TYPED.
+        # See that input's note: one word in, both the package and the selector out.
+        R='${{ inputs.rmw }}'
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
           build-essential cmake python3-colcon-common-extensions python3-rosdep \
           python3-yaml procps \
           "ros-$D-ros2launch" "ros-$D-ros2topic" "ros-$D-ros2param" \
-          "ros-$D-rmw-fastrtps-cpp"
+          "ros-$D-rmw-$R-cpp"
 
     - name: dependencies, resolved FROM package.xml (not from a list we maintain)
       shell: bash
@@ -165,6 +219,68 @@ runs:
         action's `extra-paths` input so it is resolved in the one rosdep call.
         NOTE
 
+    # ⚑ THE SELECTED MIDDLEWARE IS PROVED TO LOAD, AND THIS IS THE STEP THAT MAKES
+    # THE AXIS AN AXIS. Installing a deb and exporting a name proves neither that
+    # the name is the one in use nor that anything can use it -- and a middleware
+    # axis whose second value silently behaves like its first is worse than no
+    # axis, because it publishes a coverage claim it never had.
+    #
+    # Two assertions, because they fail for different reasons and a contributor
+    # needs to know which: the shared object is PRESENT (the deb landed and its
+    # dependencies resolved), and a real ROS process actually COMES UP through it
+    # (rcl selected it rather than reporting it and falling back).
+    #
+    # RMW_IMPLEMENTATION is exported to the JOB here rather than in each job's
+    # steps, for the same reason the deb name is derived rather than typed: with
+    # one site there is no way to install cyclonedds and run fastrtps.
+    - name: the selected middleware is the one selected, and it loads
+      shell: bash
+      run: |
+        set -uo pipefail
+        D='${{ inputs.distro }}'
+        R='${{ inputs.rmw }}'
+        IMPL="rmw_${R}_cpp"
+
+        set +u; source "/opt/ros/$D/setup.bash"; set -u
+        export RMW_IMPLEMENTATION="$IMPL"
+
+        # ⚑ THE LOADER IS ASKED, NOT ldconfig, AND THAT DISTINCTION IS A MEASURED
+        # DEFECT IN THIS STEP RATHER THAN A PREFERENCE. The first version of this
+        # check was `ldconfig -p | grep librmw_${R}_cpp.so`. Run against a container
+        # with ros-lyrical-rmw-fastrtps-cpp INSTALLED AND LISTED BY dpkg, it reported
+        # ABSENT -- because ROS installs under /opt/ros/<distro>/lib, that prefix is
+        # in no /etc/ld.so.conf.d file, and `ldconfig -p` reads the system cache only.
+        # It would have reddened every job in this workflow, on a healthy tree, for a
+        # library that was sitting right there. It was caught by running the control
+        # in the direction that MUST be green, which is the only direction that could
+        # have caught it.
+        #
+        # ctypes.CDLL goes through the same dynamic loader and the same
+        # LD_LIBRARY_PATH that setup.bash just exported and that rcl itself will use,
+        # so a pass here means the thing rcl needs is reachable the way rcl reaches it.
+        if ! python3 -c "import ctypes,sys; ctypes.CDLL('lib${IMPL}.so')" 2>/tmp/rmw_load.txt; then
+          echo "MIDDLEWARE NOT LOADABLE: lib${IMPL}.so" >&2
+          sed -n '1,10p' /tmp/rmw_load.txt >&2
+          echo "The deb ros-$D-rmw-$R-cpp was requested above. If apt reported it" >&2
+          echo "installed and this still fires, the package is served but broken on" >&2
+          echo "this distribution -- which is a real finding, not a workflow bug." >&2
+          exit 1
+        fi
+
+        # ⚑ INFORMATIONAL, AND DELIBERATELY NOT A GATE. Bringing a node up would be
+        # the stronger assertion, and on a hosted runner it is also an UNTESTED one:
+        # DDS discovery inside a container depends on the runner's network, this seat
+        # could not run a job on the runner to find out, and an untested command made
+        # into a gate is exactly what reddened this workflow's first draft. The hard
+        # gate above is deterministic. If this line is quiet in a run, read it as
+        # unmeasured, not as failure.
+        timeout 60 ros2 topic list >/tmp/rmw_probe.txt 2>&1 \
+          && echo "node came up through $IMPL" \
+          || echo "NOTE: 'ros2 topic list' did not complete under $IMPL (not a gate; see above)"
+
+        echo "RMW_IMPLEMENTATION=$IMPL" >> "$GITHUB_ENV"
+        echo "middleware OK: $IMPL (exported to the job)"
+
     # ⚑ WHAT WE ARE BUILDING AGAINST, RECORDED RATHER THAN ASSUMED.
     # packages.ros.org is a MOVING feed and the deb version is deliberately NOT pinned:
     # pinning turns the day the feed rotates into a RED the contributor cannot fix. The
@@ -179,6 +295,11 @@ runs:
           echo "### substrate — $D"
           echo '```'
           . /etc/os-release; echo "os        : $PRETTY_NAME ($VERSION_CODENAME) $(dpkg --print-architecture)"
+          echo "arch      : $(uname -m)"
+          # ⚑ PRINTED BECAUSE IT USED TO BE INVISIBLE. Every result this package
+          # published before 2026-09-08 was a Fast DDS result that did not say so.
+          R='${{ inputs.rmw }}'
+          echo "middleware: rmw_${R}_cpp $(dpkg -s ros-$D-rmw-$R-cpp 2>/dev/null | awk -F': ' '/^Version/{print $2}')"
           for p in nav2-costmap-2d nav2-util nav2-ros-common nav2-msgs diagnostic-msgs; do
             echo "$p: $(dpkg -s ros-$D-$p 2>/dev/null | awk -F': ' '/^Version/{print $2}')"
           done

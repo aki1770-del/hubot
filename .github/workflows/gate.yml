@@ -53,9 +53,39 @@ env:
 jobs:
   # ── 1 ── the suite: build against RELEASED nav2 and run all ten CTest targets
   suite:
-    name: suite (released nav2)
-    runs-on: ubuntu-latest
+    name: suite (released nav2, ${{ matrix.arch }})
+    # ⚑ THE ARCHITECTURE AXIS. Until 2026-09-08 every job in this file ran on
+    # `ubuntu-latest`, which is amd64, and this package's target -- a head unit or
+    # a robot -- is arm64. The suite HAD been run on arm64 by hand, in an emulated
+    # clean room, and the result lived in the README; nothing re-ran it, so it aged
+    # from a measurement into a sentence the moment the next commit landed.
+    #
+    # `ubuntu-24.04-arm` is a GitHub-hosted arm64 runner, and it is REAL SILICON
+    # rather than emulation. Verified 2026-09-08, and deliberately not from the
+    # documentation page: this account's OWN run history. SNGNav's arm64 workflow
+    # has 71 runs; the six most recent were read job-by-job and every one reports
+    # `labels: ["ubuntu-24.04-arm"]`, `runner_group_name: GitHub Actions` (hosted,
+    # not self-hosted) and `conclusion: success`, the latest 2026-09-07. The other
+    # 65 were not opened, so "71" is the run count and "6/6" is the measurement.
+    #
+    # It is one line, and it buys something the emulated room could not. The
+    # emulated guest has no real-time clock and no hardware virtualisation, so
+    # every timing figure from it is meaningless -- which is why the README's own
+    # bound reads "real-time behaviour on real silicon is untested". This is real
+    # silicon.
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
+    strategy:
+      # An arm64 failure must not cancel the amd64 run, for the reason the distro
+      # floor gives below: they are separate claims and whoever is reading needs
+      # both answers from one push.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     container:
       image: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
       # ⚑ NO `options: --init` HERE, AND THE OMISSION IS THE RULING.
@@ -103,6 +133,7 @@ jobs:
         with:
           distro: lyrical
           ubuntu: ${{ env.BASE_CODENAME }}
+          arch: ${{ matrix.arch }}
 
       - name: build
         shell: bash
@@ -182,7 +213,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: suite-logs
+          # ⚑ PER-CELL, AND NOT COSMETIC. upload-artifact@v4 does not merge two
+          # uploads that share a name -- it FAILS the second. Without the suffix a
+          # matrix reds whichever cell finished last, on a tree with nothing wrong
+          # with it, and the red points at the upload rather than at the axis.
+          name: suite-logs-${{ matrix.arch }}
           path: |
             /ws/build.log
             /ws/test-result.log
@@ -192,9 +227,25 @@ jobs:
 
   # ── 2 ── the bring-up: the four cases, on released nav2, from the install space
   launch:
-    name: launch falsifier (bring-up)
+    name: launch falsifier (bring-up, ${{ matrix.rmw }})
+    # ⚑ THE MIDDLEWARE AXIS, AND IT IS HERE RATHER THAN ON `suite` ON PURPOSE.
+    # Every one of the suite's 52 tests is single-process, so the DDS layer barely
+    # participates there -- measured 2026-09-08 on lyrical/amd64, the suite is
+    # 52 tests / 0 errors / 0 failures / 2 skipped under Cyclone DDS, identical to
+    # the Fast DDS figure this page publishes. A second suite job would spend a
+    # runner to re-prove that.
+    #
+    # THIS job is where the transport can decide the answer: four cases, each a
+    # real bring-up, processes that have to discover each other. The CHANGELOG
+    # already carries the warrant -- "BOUND: rmw_fastrtps_cpp only -- QoS matching
+    # is RMW-dependent and this does not generalise" -- and a bound nothing tests
+    # is a bound that gets quietly wider with every release.
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        rmw: [fastrtps, cyclonedds]
     container:
       image: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
       # ⚑ NO `options: --init` HERE, AND THE OMISSION IS THE RULING.
@@ -242,6 +293,7 @@ jobs:
         with:
           distro: lyrical
           ubuntu: ${{ env.BASE_CODENAME }}
+          rmw: ${{ matrix.rmw }}
 
       - name: build into an install space
         shell: bash
@@ -318,7 +370,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: launch-logs
+          # ⚑ PER-CELL -- see the note on `suite-logs-*`; v4 fails a duplicate name.
+          name: launch-logs-${{ matrix.rmw }}
           path: |
             /tmp/lg_real/
             /tmp/lg_self/
